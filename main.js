@@ -292,6 +292,7 @@ function addLookalikeSphere() {
 	// the lookalike sphere
 	let geometry = new THREE.SphereGeometry( 1, 200, 200 );
 	sphere = new THREE.Mesh( geometry, interferenceMaterial );
+	sphere.visible = false;
 	// lookalikeSphere.matrixAutoUpdate = false;	// we will update the matrix ourselves
 	scene.add( sphere );
 }
