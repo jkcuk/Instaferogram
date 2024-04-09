@@ -24,12 +24,15 @@ let name = 'Instaferogram';
 let scene;
 let renderer;
 let camera;
-let controls, interferenceMaterial, xPlane, yPlane, zPlane,
-	sphere;
+let interferenceMaterial, xPlane, yPlane, zPlane, sphere;
+
+let initialisation = 0;	// 0 = row of sources
 let lastOmegaTTime = Date.now();
 let omega = 1;
 	
 let fovS = 68;
+
+// GUI stuff
 
 // the status text area
 let status = document.createElement('div');
@@ -38,12 +41,16 @@ let statusTime;	// the time the last status was posted
 // the info text area
 let info = document.createElement('div');
 
-let gui;
+// orbitControls
+let controls;
 
-let showingStoredPhoto;
+// menu
+let gui;
 
 let storedPhoto;
 let storedPhotoDescription;
+let storedPhotoInfoString;
+let showingStoredPhoto = false;
 
 // my Canon EOS450D camera
 const click = new Audio('./click.m4a');
@@ -58,8 +65,8 @@ function init() {
 	scene = new THREE.Scene();
 	scene.background = new THREE.Color( 'skyblue' );
 	let windowAspectRatio = window.innerWidth / window.innerHeight;
-	camera = new THREE.PerspectiveCamera( fovS, windowAspectRatio, 0.0001, 100 );
-	camera.position.z = 10;
+	camera = new THREE.PerspectiveCamera( fovS, windowAspectRatio, 0.0001, 50 );
+	camera.position.z = 20;
 	screenChanged();
 	
 	renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -126,7 +133,7 @@ function createInterferenceMaterial() {
 			noOfSources: { value: N },
 			maxAmplitude: { value: .5*N },
 			maxIntensity: { value: .25*N*N },
-			k: { value: 20.0 },
+			k: { value: 2*Math.PI },
 			omegaT: { value: 0.0 },
 			plotType: { value: 3 },	// 0 = intensity, 1 = intensity & phase, 2 = phase, 3 = real part only
 			brightnessFactor: { value: 1 },
@@ -310,6 +317,8 @@ function addOrbitControls() {
 	controls.enablePan = true;
 	controls.enableZoom = true;
 
+	controls.maxDistance = 40;
+
 	// controls.maxPolarAngle = Math.PI;
 }
 
@@ -334,6 +343,7 @@ function createGUI() {
 
 	const params = {
 		'&omega;': omega,
+		'&lambda;': 2*Math.PI/interferenceMaterial.uniforms.k.value,
 		'Plot type': getPlotTypeString(),
 		'Exposure compensation': getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value),
 		'Show <i>x</i> plane': xPlane.visible,
@@ -351,6 +361,7 @@ function createGUI() {
 
 	const folderPhysics = gui.addFolder( 'Physics' );
 	folderPhysics.add( params, '&omega;', -20, 20, 0.1 ).onChange( (o) => {omega = o;} );
+	folderPhysics.add( params, '&lambda;', 0.1, 5, 0.1 ).onChange( (l) => {interferenceMaterial.uniforms.k.value = 2*Math.PI/l;} );
 
 	const folderPlot = gui.addFolder( 'Plot' );
 	folderPlot.add( params, 'Plot type', { 'Intensity': 0, 'Phase & intensity': 1, 'Phase': 2, 'Re(amplitude)': 3 } ).onChange( (t) => { interferenceMaterial.uniforms.plotType.value = t; });
@@ -394,6 +405,8 @@ function addEventListenersEtc() {
 	// share button
 	document.getElementById('shareButton').addEventListener('click', share);
 	document.getElementById('shareButton').style.visibility = "hidden";
+	if(!(navigator.share)) document.getElementById('shareButton').src="./shareButtonUnavailable.png";
+	// if(!(navigator.share)) document.getElementById('shareButton').style.opacity = 0.3;
 
 	// delete button
 	document.getElementById('deleteButton').addEventListener('click', deleteStoredPhoto);
@@ -540,8 +553,9 @@ function takePhoto() {
 		click.play();
 
 		storedPhoto = renderer.domElement.toDataURL('image/png');
+		storedPhotoInfoString = getInfoString();
 
-		storedPhotoDescription = '';
+		storedPhotoDescription = name;
 		// 
 		document.getElementById('storedPhoto').src=storedPhoto;
 		document.getElementById('storedPhotoThumbnail').src=storedPhoto;
@@ -558,13 +572,12 @@ async function share() {
 		fetch(storedPhoto)
 		.then(response => response.blob())
 		.then(blob => {
-			const file = new File([blob], name+' '+storedPhotoDescription+'.png', { type: blob.type });
+			const file = new File([blob], name+storedPhotoDescription+'.png', { type: blob.type });
 
 			// Use the Web Share API to share the screenshot
 			if (navigator.share) {
 				navigator.share({
-					title: `${name}`,
-					// text: 'Check out this image rendered using '+name+' (https://jkcuk.github.io/'+name+'/)!',
+					title: storedPhotoDescription,
 					files: [file],
 				});
 			} else {
