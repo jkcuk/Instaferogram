@@ -33,9 +33,10 @@ let interferenceMaterial, xPlane, yPlane, zPlane, sphere;
 
 let fieldType = 0;	// 0 = line of point sources, 1 = ring of point sources
 let lastOmegaTTime = Date.now();
-let omega = 10;
+// let omega = 10;
+let f = 1;	// frequency
 	
-let fovS = 45;
+let fovS = 68;
 
 // GUI stuff
 
@@ -83,7 +84,7 @@ function init() {
 
 	createInterferenceMaterial();
 	addPlanes();
-	addLookalikeSphere();
+	addSphere();
 
 	// user interface
 
@@ -109,7 +110,7 @@ function animate() {
 }
 
 function setUniforms() {
-	interferenceMaterial.uniforms.omegaT.value += omega*0.001*(Date.now()-lastOmegaTTime);
+	interferenceMaterial.uniforms.omegaT.value += 2*Math.PI*f*0.001*(Date.now()-lastOmegaTTime);
 	lastOmegaTTime = Date.now();
 	// postStatus(`omegaT = ${shaderMaterial.uniforms.omegaT.value}`);
 }
@@ -273,12 +274,12 @@ function recreateGUI() {
 	// gui.hide();
 
 	const params = {
-		'&omega;': omega,
-		'&lambda;': 2*Math.PI/interferenceMaterial.uniforms.k.value,
+		'Frequency <i>f</i>': f,
+		'Wavelength &lambda;': 2*Math.PI/interferenceMaterial.uniforms.k.value,
 		'Sources arrangement': getFieldTypeString(),
 		'No of sources': noOfSources,
-		'<i>m</i>': m,
-		'<i>d</i>': d,
+		'Topolog. charge <i>m</i>': m,
+		'Line length/radius <i>d</i>': d,
 		'Plot type': getPlotTypeString(),
 		'Exposure compensation': getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value),
 		'Show <i>x</i> plane': xPlane.visible,
@@ -295,11 +296,11 @@ function recreateGUI() {
 	}
 
 	const folderPhysics = gui.addFolder( 'Physics' );
-	folderPhysics.add( params, '&omega;', -20, 20, 0.1 ).onChange( (o) => {omega = o;} );
-	folderPhysics.add( params, '&lambda;', 0.01, 2, 0.01 ).onChange( (l) => {interferenceMaterial.uniforms.k.value = 2*Math.PI/l;} );
+	folderPhysics.add( params, 'Frequency <i>f</i>', -10, 10, 0.1 ).onChange( (x) => {f = x;} );
+	folderPhysics.add( params, 'Wavelength &lambda;', 0.01, 2, 0.01 ).onChange( (l) => {interferenceMaterial.uniforms.k.value = 2*Math.PI/l;} );
 	folderPhysics.add( params, 'Sources arrangement', { 'Line': 0, 'Ring': 1 } ).onChange( (t) => { fieldType = t; createSources(); recreateGUI(); });
-	folderPhysics.add( params, '<i>m</i>', -10, 10, 1).onChange( (i) => { m = i; createSources(); } );
-	folderPhysics.add( params, '<i>d</i>', 0, 20, 0.01).onChange( (f) => { d = f; createSources(); } );
+	folderPhysics.add( params, 'Topolog. charge <i>m</i>', -10, 10, 1).onChange( (i) => { m = i; createSources(); } );
+	folderPhysics.add( params, 'Line length/radius <i>d</i>', 0, 20, 0.01).onChange( (f) => { d = f; createSources(); } );
 	folderPhysics.add( params, 'No of sources', 1, 100, 1).onChange( (n) => { noOfSources = n; createSources(); } );
 	// change menu according to field type
 	// switch(fieldType) {
@@ -311,7 +312,7 @@ function recreateGUI() {
 	// }
 	const folderPlot = gui.addFolder( 'Plot' );
 	folderPlot.add( params, 'Plot type', { 'Intensity': 0, 'Phase & intensity': 1, 'Phase': 2, 'Re(amplitude)': 3 } ).onChange( (t) => { interferenceMaterial.uniforms.plotType.value = t; });
-	folderPlot.add( params, 'Exposure compensation', -1, 10, 1/3).onChange( (b) => {interferenceMaterial.uniforms.brightnessFactor.value = Math.pow(2, b);} );
+	folderPlot.add( params, 'Exposure compensation', -5, 10, 1/3).onChange( (b) => {interferenceMaterial.uniforms.brightnessFactor.value = Math.pow(2, b);} );
 	folderPlot.add( params, 'Show <i>x</i> plane' ).onChange( (s) => {xPlane.visible = s;} );
 	folderPlot.add( params, '<i>x</i> =', -5, 5, 0.01 ).onChange( (x) => { xPlane.position.set(x, 0, 0); } );
 	folderPlot.add( params, 'Show <i>y</i> plane' ).onChange( (s) => {yPlane.visible = s;} );
@@ -400,8 +401,8 @@ function addPlanes() {
 	scene.add( zPlane );
 }
 
-/** create lookalike sphere, textures, transformation matrix */
-function addLookalikeSphere() {
+/** create sphere, textures, transformation matrix */
+function addSphere() {
 	// the lookalike sphere
 	let geometry = new THREE.SphereGeometry( 1, 200, 200 );
 	sphere = new THREE.Mesh( geometry, interferenceMaterial );
@@ -666,39 +667,27 @@ function postStatus(text) {
 }
 
 function getInfoString() {
-	// return `Lenslet array 1 (the closer array, when seen in "forward" direction)<br>` +
-	// 	`&nbsp;&nbsp;Visible `+ (raytracingSphereShaderMaterial.uniforms.visible1.value?'&check;':'&cross;')+`<br>` +
-	// 	`&nbsp;&nbsp;Period = ${raytracingSphereShaderMaterial.uniforms.period1.value.toPrecision(4)}<br>` +
-	// 	`&nbsp;&nbsp;Rotation angle = ${(alpha1*180.0/Math.PI).toPrecision(4)}&deg;<br>` +
-	// 	`&nbsp;&nbsp;Focal length = ${raytracingSphereShaderMaterial.uniforms.lensletsF1.value.toPrecision(4)}<br>` +
-	// 	`&nbsp;&nbsp;Radius = ${raytracingSphereShaderMaterial.uniforms.radius1.value.toPrecision(4)}<br>` +
-	// 	`&nbsp;&nbsp;Centre of array = (${raytracingSphereShaderMaterial.uniforms.centreOfArray1.value.x.toPrecision(4)}, ${raytracingSphereShaderMaterial.uniforms.centreOfArray1.value.y.toPrecision(4)}, ${raytracingSphereShaderMaterial.uniforms.centreOfArray1.value.z.toPrecision(4)})<br>` +
-	// 	`&nbsp;&nbsp;Focal length of additional lens in same plane = ${raytracingSphereShaderMaterial.uniforms.additionalF1.value.toPrecision(4)}<br>` +		
-	// 	`Lenslet array 2 (the farther array, when seen in "forward" direction)<br>` +
-	// 	`&nbsp;&nbsp;Visible `+ (raytracingSphereShaderMaterial.uniforms.visible2.value?'&check;':'&cross;')+`<br>` +
-	// 	`&nbsp;&nbsp;Period = ${raytracingSphereShaderMaterial.uniforms.period2.value.toPrecision(4)} (&Delta;<i>p</i> = ${deltaPeriod.toPrecision(4)})<br>` +
-	// 	`&nbsp;&nbsp;Rotation angle = ${(alpha2*180.0/Math.PI).toPrecision(4)}&deg;<br>` +
-	// 	`&nbsp;&nbsp;Focal length = ${raytracingSphereShaderMaterial.uniforms.lensletsF2.value.toPrecision(4)}<br>` +
-	// 	`&nbsp;&nbsp;Radius = ${raytracingSphereShaderMaterial.uniforms.radius2.value.toPrecision(4)}<br>` +
-	// 	`&nbsp;&nbsp;Centre of array = (${raytracingSphereShaderMaterial.uniforms.centreOfArray2.value.x.toPrecision(4)}, ${raytracingSphereShaderMaterial.uniforms.centreOfArray2.value.y.toPrecision(4)}, ${raytracingSphereShaderMaterial.uniforms.centreOfArray2.value.z.toPrecision(4)}) (offset from confocal = ${offsetFromConfocal.toPrecision(4)})<br>` +
-	// 	`&nbsp;&nbsp;Focal length of additional lens in same plane = ${raytracingSphereShaderMaterial.uniforms.additionalF2.value.toPrecision(4)}<br>` +		
-	// 	'Lenslet type: '+(raytracingSphereShaderMaterial.uniforms.idealLenses.value?'Ideal thin lenses':'Phase holograms') + "<br>" +
-	// 	`Video feeds<br>` +
-	// 	`&nbsp;&nbsp;Distance from origin = ${raytracingSphereShaderMaterial.uniforms.videoDistance.value.toPrecision(4)}<br>` +	// (user-facing) camera
-	// 	`&nbsp;&nbsp;Horizontal fields of view (when seen from the origin)<br>` +
-	// 	`&nbsp;&nbsp;&nbsp;&nbsp;User-facing camera = ${fovVideoFeedU.toPrecision(4)}&deg;<br>` +	// (user-facing) camera
-	// 	`&nbsp;&nbsp;&nbsp;&nbsp;Environment-facing camera = ${fovVideoFeedE.toPrecision(4)}&deg;<br>` +	// (environment-facing) camera
-	// 	`Virtual camera<br>` +
-	// 	`&nbsp;&nbsp;Position = (${camera.position.x.toPrecision(4)}, ${camera.position.y.toPrecision(4)}, ${camera.position.z.toPrecision(4)})<br>` +
-	// 	`&nbsp;&nbsp;Horiz. FOV = ${fovScreen.toPrecision(4)}<br>` +
-	// 	`&nbsp;&nbsp;Aperture radius = ${apertureRadius.toPrecision(4)}<br>` +
-	// 	`&nbsp;&nbsp;Focussing distance = ${focusDistance.toPrecision(4)}<br>` +
-	// 	`&nbsp;&nbsp;Number of rays = ${noOfRays}`
-	// 	// `apertureXHat = (${raytracingSphereShaderMaterial.uniforms.apertureXHat.value.x.toPrecision(4)}, ${raytracingSphereShaderMaterial.uniforms.apertureXHat.value.y.toPrecision(4)}, ${raytracingSphereShaderMaterial.uniforms.apertureXHat.value.z.toPrecision(4)})<br>` +
-	// 	// `apertureYHat = (${raytracingSphereShaderMaterial.uniforms.apertureYHat.value.x.toPrecision(4)}, ${raytracingSphereShaderMaterial.uniforms.apertureYHat.value.y.toPrecision(4)}, ${raytracingSphereShaderMaterial.uniforms.apertureYHat.value.z.toPrecision(4)})`
-	// 	;
+	return `f = ${f.toPrecision(4)} Hz<br>`+
+		`&lambda; = ${(2*Math.PI/interferenceMaterial.uniforms.k.value).toPrecision(4)}<br>` + 
+		'Sources arrangement = '+ getFieldTypeString() + '<br>' +
+		`No of sources = ${noOfSources}<br>` +
+		`<i>m</i> = ${m}<br>` +
+		`<i>d</i> = ${d.toPrecision(4)}<br>` +
+		`Plot type = ` + getPlotTypeString() + '<br>' +
+		`Exposure compensation = ${getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value).toPrecision(4)}<br>` +
+	// `Show <i>x</i> plane': xPlane.visible,
+	// `Show <i>y</i> plane': yPlane.visible,
+	// `Show <i>z</i> plane': zPlane.visible,
+	// `Show sphere': sphere.visible,
+		(xPlane.visible?'Show':'Hide')+` plane <i>x</i> = ${xPlane.position.x.toPrecision(4)}<br>` +
+		(yPlane.visible?'Show':'Hide')+` plane <i>y</i> = ${yPlane.position.y.toPrecision(4)}<br>` +
+		(zPlane.visible?'Show':'Hide')+` plane <i>z</i> = ${zPlane.position.z.toPrecision(4)}<br>` +
+		(sphere.visible?'Show':'Hide')+` sphere <i>r</i> = ${sphere.scale.x.toPrecision(4)}<br>` +
+		`Virtual camera<br>` +
+		`&nbsp;&nbsp;Position = (${camera.position.x.toPrecision(4)}, ${camera.position.y.toPrecision(4)}, ${camera.position.z.toPrecision(4)})<br>` +
+		`&nbsp;&nbsp;Horiz. FOV = ${fovS.toPrecision(4)}&deg;<br>`
+		;
 	// 	console.log("*");
-	return 'test';
 }
 
 function refreshInfo() {
@@ -721,6 +710,9 @@ function createInfo() {
 	info.innerHTML = "-- nothing to show (yet) --";
 	info.style.top = 60 + 'px';
 	info.style.left = 0 + 'px';
+	// info.style.width = "500px";
+	// info.style.height = "500px";
+	// info.style.overflow = "auto";
 	info.style.zIndex = 1;
 	document.body.appendChild(info);
 	info.style.visibility = "hidden";
