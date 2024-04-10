@@ -18,15 +18,20 @@ import * as THREE from 'three';
 
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+// import { int } from 'three/examples/jsm/nodes/Nodes.js';
 
 let name = 'Instaferogram';
 
 let scene;
 let renderer;
 let camera;
+let sourcePositions, sourceAmplitudes;
+let noOfSources = 100;
+let m = 1;
+let d = 1;	// diameter of ring of sources / length of line
 let interferenceMaterial, xPlane, yPlane, zPlane, sphere;
 
-let initialisation = 0;	// 0 = row of sources
+let fieldType = 0;	// 0 = line of point sources, 1 = ring of point sources
 let lastOmegaTTime = Date.now();
 let omega = 1;
 	
@@ -88,7 +93,7 @@ function init() {
 	addOrbitControls();	// add to outside camera
 
 	// the controls menu
-	createGUI();
+	recreateGUI();
 
 	createInfo();
 	refreshInfo();
@@ -109,30 +114,50 @@ function setUniforms() {
 	// postStatus(`omegaT = ${shaderMaterial.uniforms.omegaT.value}`);
 }
 
-function createInterferenceMaterial() {
+function createSources() {
 	// create an array of sources
-	let sourcePositions = [];
-	let sourceAmplitude = [];	// (complex) amplitudes
+	sourcePositions = [];
+	sourceAmplitudes = [];	// (complex) amplitudes
 
 	// fill in the elements of all three arrays
-	let N = 100;	// no of elements
-	for(let i=0; i<N; i++) {
-		// create a new pairs or random numbers (x, y) such that x^2 + y^2 <= 1
-		let phi = 2.0*Math.PI*i/N;	// azimuthal angle
-		let x = Math.cos(phi);
-		let y = Math.sin(phi);
-		sourcePositions.push(new THREE.Vector3(x, y, 0));
-		sourceAmplitude.push(new THREE.Vector2(x*x-y*y, 2*y*x));
+	// noOfSources = 100;	// no of elements
+	let i=0;
+	for(; i<noOfSources; i++) {
+		let phi = 2.0*Math.PI*i/noOfSources;	// azimuthal angle
+		switch( fieldType ) {
+			case 0:	// line
+				sourcePositions.push(new THREE.Vector3(d*(noOfSources == 0?0:(i/(noOfSources-1)-0.5)), 0, 0));
+				sourceAmplitudes.push(new THREE.Vector2(Math.cos(m*phi), Math.sin(m*phi)));
+				break;			
+			case 1:	// ring
+			default:
+				sourcePositions.push(new THREE.Vector3(d*Math.cos(phi), d*Math.sin(phi), 0));
+				sourceAmplitudes.push(new THREE.Vector2(Math.cos(m*phi), Math.sin(m*phi)));
+		}
 	}
+	for(; i<100; i++) {
+		sourcePositions.push(new THREE.Vector3(0, 0, 0));
+		sourceAmplitudes.push(new THREE.Vector2(1, 0));
+	}
+
+	if(interferenceMaterial) {
+		interferenceMaterial.uniforms.sourcePositions.value = sourcePositions;
+		interferenceMaterial.uniforms.sourceAmplitudes.value = sourceAmplitudes;
+		interferenceMaterial.uniforms.noOfSources.value = noOfSources;
+	}
+}
+
+function createInterferenceMaterial() {
+	createSources();
 
 	interferenceMaterial = new THREE.ShaderMaterial({
 		side: THREE.DoubleSide,
 		uniforms: { 
 			sourcePositions: { value: sourcePositions },
-			sourceAmplitude: { value: sourceAmplitude },
-			noOfSources: { value: N },
-			maxAmplitude: { value: .5*N },
-			maxIntensity: { value: .25*N*N },
+			sourceAmplitudes: { value: sourceAmplitudes },
+			noOfSources: { value: noOfSources },
+			maxAmplitude: { value: .5*noOfSources },
+			maxIntensity: { value: .25*noOfSources*noOfSources },
 			k: { value: 2*Math.PI },
 			omegaT: { value: 0.0 },
 			plotType: { value: 3 },	// 0 = intensity, 1 = intensity & phase, 2 = phase, 3 = real part only
@@ -160,7 +185,7 @@ function createInterferenceMaterial() {
 			varying vec3 v_position;
 
 			uniform vec3 sourcePositions[100];
-			uniform vec2 sourceAmplitude[100];
+			uniform vec2 sourceAmplitudes[100];
 			uniform int noOfSources;
 			uniform float maxAmplitude;
 			uniform float maxIntensity;
@@ -198,10 +223,10 @@ function createInterferenceMaterial() {
 					float s = sin(kd);
 					// add to the sum of amplitudes the amplitude due to 
 					amplitude += vec2(
-						sourceAmplitude[i].x*c - sourceAmplitude[i].y*s,	// real part = r1 r2 - i1 i2
-						sourceAmplitude[i].x*s + sourceAmplitude[i].y*c	// imaginary part = r1 i2 + r2 i1
+						sourceAmplitudes[i].x*c - sourceAmplitudes[i].y*s,	// real part = r1 r2 - i1 i2
+						sourceAmplitudes[i].x*s + sourceAmplitudes[i].y*c	// imaginary part = r1 i2 + r2 i1
 					)/d;
-					// amplitude += sourcePositions[i].xy;	// sourceAmplitude[i]/d;
+					// amplitude += sourcePositions[i].xy;	// sourceAmplitudes[i]/d;
 				}
 
 				switch(plotType) {
@@ -239,7 +264,88 @@ function createInterferenceMaterial() {
 			}
 		`
 	});
+}
 
+// see https://github.com/mrdoob/three.js/blob/master/examples/webgl_animation_skinning_additive_blending.html
+function recreateGUI() {
+	if(gui) gui.destroy();
+	gui = new GUI();
+	// gui.hide();
+
+	const params = {
+		'&omega;': omega,
+		'&lambda;': 2*Math.PI/interferenceMaterial.uniforms.k.value,
+		'Sources arrangement': getFieldTypeString(),
+		'No of sources': noOfSources,
+		'<i>m</i>': m,
+		'<i>d</i>': d,
+		'Plot type': getPlotTypeString(),
+		'Exposure compensation': getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value),
+		'Show <i>x</i> plane': xPlane.visible,
+		'Show <i>y</i> plane': yPlane.visible,
+		'Show <i>z</i> plane': zPlane.visible,
+		'Show sphere': sphere.visible,
+		'<i>x</i> =': 0,
+		'<i>y</i> =': 0,
+		'<i>z</i> =': 0,
+		'<i>r</i> =': 1,
+		'Field of view (&deg;)': fovS,
+		'Point forward (in -<b>z</b> direction)': pointForward,
+		'Point backward (in +<b>z</b> direction)': pointBackward
+	}
+
+	const folderPhysics = gui.addFolder( 'Physics' );
+	folderPhysics.add( params, '&omega;', -20, 20, 0.1 ).onChange( (o) => {omega = o;} );
+	folderPhysics.add( params, '&lambda;', 0.01, 2, 0.01 ).onChange( (l) => {interferenceMaterial.uniforms.k.value = 2*Math.PI/l;} );
+	folderPhysics.add( params, 'Sources arrangement', { 'Line': 0, 'Ring': 1 } ).onChange( (t) => { fieldType = t; createSources(); recreateGUI(); });
+	folderPhysics.add( params, '<i>m</i>', -10, 10, 1).onChange( (i) => { m = i; createSources(); } );
+	folderPhysics.add( params, '<i>d</i>', 0, 20, 0.01).onChange( (f) => { d = f; createSources(); } );
+	folderPhysics.add( params, 'No of sources', 1, 100, 1).onChange( (n) => { noOfSources = n; createSources(); } );
+	// change menu according to field type
+	// switch(fieldType) {
+	// 	case 0:
+	// 		gui.addFolder( '0' );
+	// 		break;
+	// 	case 1:
+	// 		gui.addFolder( '1' );
+	// }
+	const folderPlot = gui.addFolder( 'Plot' );
+	folderPlot.add( params, 'Plot type', { 'Intensity': 0, 'Phase & intensity': 1, 'Phase': 2, 'Re(amplitude)': 3 } ).onChange( (t) => { interferenceMaterial.uniforms.plotType.value = t; });
+	folderPlot.add( params, 'Exposure compensation', -1, 10, 1/3).onChange( (b) => {interferenceMaterial.uniforms.brightnessFactor.value = Math.pow(2, b);} );
+	folderPlot.add( params, 'Show <i>x</i> plane' ).onChange( (s) => {xPlane.visible = s;} );
+	folderPlot.add( params, '<i>x</i> =', -5, 5, 0.01 ).onChange( (x) => { xPlane.position.set(x, 0, 0); } );
+	folderPlot.add( params, 'Show <i>y</i> plane' ).onChange( (s) => {yPlane.visible = s;} );
+	folderPlot.add( params, '<i>y</i> =', -5, 5, 0.01 ).onChange( (y) => { yPlane.position.set(0, y, 0); } );
+	folderPlot.add( params, 'Show <i>z</i> plane' ).onChange( (s) => {zPlane.visible = s;} );
+	folderPlot.add( params, '<i>z</i> =', -5, 5, 0.01 ).onChange( (z) => { zPlane.position.set(0, 0, z); } );
+	folderPlot.add( params, 'Show sphere' ).onChange( (s) => { sphere.visible = s; } );
+	folderPlot.add( params, '<i>r</i> =', 0, 5, 0.01 ).onChange( (r) => { sphere.scale.setScalar(r); } );
+
+	const folderCamera = gui.addFolder( 'Virtual camera' );
+	folderCamera.add( params, 'Point forward (in -<b>z</b> direction)');
+	folderCamera.add( params, 'Point backward (in +<b>z</b> direction)');
+	folderCamera.add( params, 'Field of view (&deg;)', 10, 170, 1).onChange( setScreenFOV );   
+	folderCamera.close();
+}
+
+function getPlotTypeString() {
+	switch(interferenceMaterial.uniforms.plotType.value) {
+		case 0: return 'Intensity';
+		case 1: return 'Phase & intensity';
+		case 2: return 'Phase';
+		case 3: return 'Re(amplitude)';
+	}
+}
+
+function getFieldTypeString() {
+	switch(fieldType) {
+		case 0: return 'Line';
+		case 1: return 'Ring';
+	}
+}
+
+function getBaseLog(x, y) {
+	return Math.log(y) / Math.log(x);
 }
 
 function addPlanes() {
@@ -320,66 +426,6 @@ function addOrbitControls() {
 	controls.maxDistance = 40;
 
 	// controls.maxPolarAngle = Math.PI;
-}
-
-function getPlotTypeString() {
-	switch(interferenceMaterial.uniforms.plotType.value) {
-		case 0: return 'Intensity';
-		case 1: return 'Phase & intensity';
-		case 2: return 'Phase';
-		case 3: return 'Re(amplitude)';
-	}
-}
-
-function getBaseLog(x, y) {
-	return Math.log(y) / Math.log(x);
-}
-
-// see https://github.com/mrdoob/three.js/blob/master/examples/webgl_animation_skinning_additive_blending.html
-function createGUI() {
-	// const 
-	gui = new GUI();
-	// gui.hide();
-
-	const params = {
-		'&omega;': omega,
-		'&lambda;': 2*Math.PI/interferenceMaterial.uniforms.k.value,
-		'Plot type': getPlotTypeString(),
-		'Exposure compensation': getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value),
-		'Show <i>x</i> plane': xPlane.visible,
-		'Show <i>y</i> plane': yPlane.visible,
-		'Show <i>z</i> plane': zPlane.visible,
-		'Show sphere': sphere.visible,
-		'<i>x</i>': 0,
-		'<i>y</i>': 0,
-		'<i>z</i>': 0,
-		'<i>r</i>': 1,
-		'Field of view (&deg;)': fovS,
-		'Point forward (in -<b>z</b> direction)': pointForward,
-		'Point backward (in +<b>z</b> direction)': pointBackward
-	}
-
-	const folderPhysics = gui.addFolder( 'Physics' );
-	folderPhysics.add( params, '&omega;', -20, 20, 0.1 ).onChange( (o) => {omega = o;} );
-	folderPhysics.add( params, '&lambda;', 0.1, 5, 0.1 ).onChange( (l) => {interferenceMaterial.uniforms.k.value = 2*Math.PI/l;} );
-
-	const folderPlot = gui.addFolder( 'Plot' );
-	folderPlot.add( params, 'Plot type', { 'Intensity': 0, 'Phase & intensity': 1, 'Phase': 2, 'Re(amplitude)': 3 } ).onChange( (t) => { interferenceMaterial.uniforms.plotType.value = t; });
-	folderPlot.add( params, 'Exposure compensation', -6, 6, 1/3).onChange( (b) => {interferenceMaterial.uniforms.brightnessFactor.value = Math.pow(2, b);} );
-	folderPlot.add( params, 'Show <i>x</i> plane' ).onChange( (s) => {xPlane.visible = s;} );
-	folderPlot.add( params, 'Show <i>y</i> plane' ).onChange( (s) => {yPlane.visible = s;} );
-	folderPlot.add( params, 'Show <i>z</i> plane' ).onChange( (s) => {zPlane.visible = s;} );
-	folderPlot.add( params, 'Show sphere' ).onChange( (s) => { sphere.visible = s; } );
-	folderPlot.add( params, '<i>x</i>', -5, 5, 0.01 ).onChange( (x) => { xPlane.position.set(x, 0, 0); } );
-	folderPlot.add( params, '<i>y</i>', -5, 5, 0.01 ).onChange( (y) => { yPlane.position.set(0, y, 0); } );
-	folderPlot.add( params, '<i>z</i>', -5, 5, 0.01 ).onChange( (z) => { zPlane.position.set(0, 0, z); } );
-	folderPlot.add( params, '<i>r</i>', 0, 5, 0.01 ).onChange( (r) => { sphere.scale.setScalar(r); } );
-
-	const folderCamera = gui.addFolder( 'Virtual camera' );
-	folderCamera.add( params, 'Point forward (in -<b>z</b> direction)');
-	folderCamera.add( params, 'Point backward (in +<b>z</b> direction)');
-	folderCamera.add( params, 'Field of view (&deg;)', 10, 170, 1).onChange( setScreenFOV );   
-	folderCamera.close();
 }
 
 function addEventListenersEtc() {
