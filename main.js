@@ -33,7 +33,7 @@ let interferenceMaterial, xPlane, yPlane, zPlane, sphere;
 
 let fieldType = 0;	// 0 = line of point sources, 1 = ring of point sources
 let lastOmegaTTime = Date.now();
-let omega = 1;
+let omega = 10;
 	
 let fovS = 68;
 
