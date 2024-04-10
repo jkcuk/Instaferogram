@@ -26,8 +26,8 @@ let scene;
 let renderer;
 let camera;
 let sourcePositions, sourceAmplitudes;
-let noOfSources = 100;
-let m = 1;
+let noOfSources = 2;
+let m = 0;
 let d = 1;	// diameter of ring of sources / length of line
 let interferenceMaterial, xPlane, yPlane, zPlane, sphere;
 
@@ -126,7 +126,7 @@ function createSources() {
 		let phi = 2.0*Math.PI*i/noOfSources;	// azimuthal angle
 		switch( fieldType ) {
 			case 0:	// line
-				sourcePositions.push(new THREE.Vector3(d*(noOfSources == 0?0:(i/(noOfSources-1)-0.5)), 0, 0));
+				sourcePositions.push(new THREE.Vector3(d*(noOfSources == 1?0:(i/(noOfSources-1)-0.5)), 0, 0));
 				sourceAmplitudes.push(new THREE.Vector2(Math.cos(m*phi), Math.sin(m*phi)));
 				break;			
 			case 1:	// ring
@@ -158,10 +158,10 @@ function createInterferenceMaterial() {
 			noOfSources: { value: noOfSources },
 			maxAmplitude: { value: .5*noOfSources },
 			maxIntensity: { value: .25*noOfSources*noOfSources },
-			k: { value: 2*Math.PI },
+			k: { value: 20*Math.PI },	// lambda = 0.1
 			omegaT: { value: 0.0 },
 			plotType: { value: 3 },	// 0 = intensity, 1 = intensity & phase, 2 = phase, 3 = real part only
-			brightnessFactor: { value: 1 },
+			brightnessFactor: { value: 32 },
 			// xPlaneMatrix: { value: xPlane.matrix },
 		},
 		// wireframe: true,
