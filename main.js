@@ -161,7 +161,7 @@ function createInterferenceMaterial() {
 			k: { value: 20*Math.PI },	// lambda = 0.1
 			omegaT: { value: 0.0 },
 			plotType: { value: 3 },	// 0 = intensity, 1 = intensity & phase, 2 = phase, 3 = real part only
-			brightnessFactor: { value: 32 },
+			brightnessFactor: { value: 1 },
 			// xPlaneMatrix: { value: xPlane.matrix },
 		},
 		// wireframe: true,
