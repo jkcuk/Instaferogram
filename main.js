@@ -35,7 +35,7 @@ let fieldType = 0;	// 0 = line of point sources, 1 = ring of point sources
 let lastOmegaTTime = Date.now();
 let omega = 10;
 	
-let fovS = 68;
+let fovS = 45;
 
 // GUI stuff
 
