@@ -132,7 +132,7 @@ function createSources() {
 				break;			
 			case 1:	// ring
 			default:
-				sourcePositions.push(new THREE.Vector3(d*Math.cos(phi), d*Math.sin(phi), 0));
+				sourcePositions.push(new THREE.Vector3(0.5*d*Math.cos(phi), 0.5*d*Math.sin(phi), 0));
 				sourceAmplitudes.push(new THREE.Vector2(Math.cos(m*phi), Math.sin(m*phi)));
 		}
 	}
@@ -273,7 +273,7 @@ function recreateGUI() {
 	gui = new GUI();
 	// gui.hide();
 
-	let dString = (fieldType == 0?`Length of line`:`Radius of circle`);
+	let dString = (fieldType == 0?`Length of line`:`Diameter of circle`);
 	const params = {
 		'Frequency <i>f</i>': f,
 		'Wavelength &lambda;': 2*Math.PI/interferenceMaterial.uniforms.k.value,
@@ -282,7 +282,7 @@ function recreateGUI() {
 		'Topolog. charge <i>m</i>': m,
 		'Phase cycles along line': m,
 		'Length of line': d,
-		'Radius of circle': d,
+		'Diameter of circle': d,
 		'Plot type': getPlotTypeString(),
 		'Exposure compensation': getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value),
 		'Show <i>x</i> plane': xPlane.visible,
