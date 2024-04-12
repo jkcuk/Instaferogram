@@ -273,13 +273,16 @@ function recreateGUI() {
 	gui = new GUI();
 	// gui.hide();
 
+	let dString = (fieldType == 0?`Length of line`:`Radius of circle`);
 	const params = {
 		'Frequency <i>f</i>': f,
 		'Wavelength &lambda;': 2*Math.PI/interferenceMaterial.uniforms.k.value,
 		'Sources arrangement': getFieldTypeString(),
 		'No of sources': noOfSources,
 		'Topolog. charge <i>m</i>': m,
-		'Line length/radius <i>d</i>': d,
+		'Phase cycles along line': m,
+		'Length of line': d,
+		'Radius of circle': d,
 		'Plot type': getPlotTypeString(),
 		'Exposure compensation': getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value),
 		'Show <i>x</i> plane': xPlane.visible,
@@ -298,9 +301,9 @@ function recreateGUI() {
 	const folderPhysics = gui.addFolder( 'Physics' );
 	folderPhysics.add( params, 'Frequency <i>f</i>', -10, 10, 0.1 ).onChange( (x) => {f = x;} );
 	folderPhysics.add( params, 'Wavelength &lambda;', 0.01, 2, 0.01 ).onChange( (l) => {interferenceMaterial.uniforms.k.value = 2*Math.PI/l;} );
-	folderPhysics.add( params, 'Sources arrangement', { 'Line': 0, 'Ring': 1 } ).onChange( (t) => { fieldType = t; createSources(); recreateGUI(); });
+	folderPhysics.add( params, 'Sources arrangement', { 'Line': 0, 'Circle': 1 } ).onChange( (t) => { fieldType = t; createSources(); recreateGUI(); });
 	folderPhysics.add( params, 'Topolog. charge <i>m</i>', -10, 10, 1).onChange( (i) => { m = i; createSources(); } );
-	folderPhysics.add( params, 'Line length/radius <i>d</i>', 0, 20, 0.01).onChange( (f) => { d = f; createSources(); } );
+	folderPhysics.add( params, dString, 0, 20, 0.01).onChange( (f) => { d = f; createSources(); } );
 	folderPhysics.add( params, 'No of sources', 1, 100, 1).onChange( (n) => { noOfSources = n; createSources(); } );
 	// change menu according to field type
 	// switch(fieldType) {
@@ -341,7 +344,7 @@ function getPlotTypeString() {
 function getFieldTypeString() {
 	switch(fieldType) {
 		case 0: return 'Line';
-		case 1: return 'Ring';
+		case 1: return 'Circle';
 	}
 }
 
@@ -667,12 +670,12 @@ function postStatus(text) {
 }
 
 function getInfoString() {
-	return `f = ${f.toPrecision(4)} Hz<br>`+
-		`&lambda; = ${(2*Math.PI/interferenceMaterial.uniforms.k.value).toPrecision(4)}<br>` + 
+	return `Frequency <i>f</i> = ${f.toPrecision(4)} Hz<br>`+
+		`Wavelength &lambda; = ${(2*Math.PI/interferenceMaterial.uniforms.k.value).toPrecision(4)}<br>` + 
 		'Sources arrangement = '+ getFieldTypeString() + '<br>' +
 		`No of sources = ${noOfSources}<br>` +
-		`<i>m</i> = ${m}<br>` +
-		`<i>d</i> = ${d.toPrecision(4)}<br>` +
+		`Topological charge <i>m</i> = ${m}<br>` +
+		(fieldType == 0?`Length of line`:`Radius of circle`) + ` <i>d</i> = ${d.toPrecision(4)}<br>` +
 		`Plot type = ` + getPlotTypeString() + '<br>' +
 		`Exposure compensation = ${getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value).toPrecision(4)}<br>` +
 	// `Show <i>x</i> plane': xPlane.visible,
