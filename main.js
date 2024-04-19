@@ -18,6 +18,7 @@ import * as THREE from 'three';
 
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';	// see https://threejs.org/docs/#manual/en/introduction/How-to-create-VR-content
 // import { int } from 'three/examples/jsm/nodes/Nodes.js';
 
 let name = 'Instaferogram';
@@ -62,7 +63,8 @@ let showingStoredPhoto = false;
 const click = new Audio('./click.m4a');
 
 init();
-animate();
+// animate();
+renderer.setAnimationLoop( animate );	// see https://threejs.org/docs/#manual/en/introduction/How-to-create-VR-content
 
 function init() {
 	// create the info element first so that any problems can be communicated
@@ -79,6 +81,8 @@ function init() {
 	// renderer = new THREE.WebGLRenderer({ preserveDrawingBuffer: true });
 	renderer.setPixelRatio(window.devicePixelRatio);
 	renderer.setSize( window.innerWidth, window.innerHeight );
+	renderer.xr.enabled = true;	// see https://threejs.org/docs/#manual/en/introduction/How-to-create-VR-content
+	document.body.appendChild( VRButton.createButton( renderer ) );	// see https://threejs.org/docs/#manual/en/introduction/How-to-create-VR-content
 	document.body.appendChild( renderer.domElement );
 	// document.getElementById('livePhoto').appendChild( renderer.domElement );
 
@@ -101,7 +105,7 @@ function init() {
 }
 
 function animate() {
-	requestAnimationFrame( animate );
+	// requestAnimationFrame( animate );
 
 	if(!showingStoredPhoto) {
 		setUniforms();
