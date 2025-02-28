@@ -289,7 +289,7 @@ function recreateGUI() {
 		'Length of line': d,
 		'Diameter of circle': d,
 		'Plot type': getPlotTypeString(),
-		'Exposure compensation': getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value),
+		'Brightness': getBaseLog(2, interferenceMaterial.uniforms.brightnessFactor.value), // exposure compensation
 		'Show <i>x</i> plane': xPlane.visible,
 		'Show <i>y</i> plane': yPlane.visible,
 		'Show <i>z</i> plane': zPlane.visible,
@@ -320,7 +320,7 @@ function recreateGUI() {
 	// }
 	const folderPlot = gui.addFolder( 'Plot' );
 	folderPlot.add( params, 'Plot type', { 'Intensity': 0, 'Phase & intensity': 1, 'Phase': 2, 'Re(amplitude)': 3 } ).onChange( (t) => { interferenceMaterial.uniforms.plotType.value = t; });
-	folderPlot.add( params, 'Exposure compensation', -5, 10, 1/3).onChange( (b) => {interferenceMaterial.uniforms.brightnessFactor.value = Math.pow(2, b);} );
+	folderPlot.add( params, 'Brightness', -5, 10, 1/3).onChange( (b) => {interferenceMaterial.uniforms.brightnessFactor.value = Math.pow(2, b);} );
 	folderPlot.add( params, 'Show <i>x</i> plane' ).onChange( (s) => {xPlane.visible = s;} );
 	folderPlot.add( params, '<i>x</i> =', -5, 5, 0.01 ).onChange( (x) => { xPlane.position.set(x, 0, 0); } );
 	folderPlot.add( params, 'Show <i>y</i> plane' ).onChange( (s) => {yPlane.visible = s;} );
