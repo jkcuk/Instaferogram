@@ -236,7 +236,8 @@ function createInterferenceMaterial() {
 
 				switch(plotType) {
 					case 3:	// real part
-						gl_FragColor = vec4(brightnessFactor*amplitude.x/maxAmplitude, 0, 0, 1);
+					float a = brightnessFactor*amplitude.x/maxAmplitude;
+						gl_FragColor = vec4(a, 0, -a, 1);
 						break;
 					case 2:	// phase only
 						// float phase = atan(amplitude.y, amplitude.x);	//  mod(atan(amplitude.y, amplitude.x) + omegaT, 2.0*pi);	// -pi .. pi
