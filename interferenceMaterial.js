@@ -4,23 +4,36 @@ const maxNoOfSources = 100;
 
 class InterferenceMaterial extends THREE.ShaderMaterial {
 
+    // parameters
     fieldType = 0;	// 0 = line of point sources, 1 = ring of point sources
 	noOfSources = 2;
-	sourceExtent = 1.1;	// diameter of ring of sources / length of line
+	sourceExtent = 1.0;	// length of line of point sources or diameter of ring of point sources
 	m = 0;
-	
+
+    // variables
+    sourceTypes;    // 0 = point source, 1 = line source, 2 = uniform plane wave, 3 = Hermite-Gaussian (HG) beam, 4 = Laguerre-Gaussian (LG) beam, 5 = Bessel beam
+    sourcePositions;
+    sourceAmplitudesRe; // real part of complex amplitudes
+    sourceAmplitudesIm; // imaginary part of complex amplitudes
+    sourceDirections;   // for line source: line direction; for other beams: propagation direction
+    sourceAdditionalFloats1;	// for HG & LG beams: beam waist, w0; for Bessel beams: cone angle, theta
+    sourceAdditionalInts1;	// for Hermite-Gaussian beams: horizontal index, m; for Laguerre-Gaussian beams & Bessel beams: azimuthal index, l
+    sourceAdditionalInts2;	// for Hermite-Gaussian beams: vertical index, n; for Laguerre-Gaussian beams: radial index, p
+    
     /**
      * Represents a color material.
      * @constructor
      * @param {int} noOfSources - The number of sources that interfere to create the colour
      * @param {float} m - The azimuthal index of the source array
+     * @param {float} sourceZ 
      * @param {float} omegaT - The phase
+     * @param {float} opacity 
      */
-    constructor( noOfSources, fieldType, sourceExtent, m ) {
+    constructor( noOfSources, fieldType, sourceExtent, m, sourceZ, opacity ) {
         super({
             side: THREE.DoubleSide,
             uniforms: { 
-                sourcePositions: { value: InterferenceMaterial.createSourcePositions( noOfSources, fieldType, sourceExtent ) },
+                sourcePositions: { value: InterferenceMaterial.createSourcePositions( noOfSources, fieldType, sourceExtent, sourceZ ) },
                 sourceAmplitudes: { value: InterferenceMaterial.createSourceAmplitudes( noOfSources, m ) },
                 noOfSources: { value: noOfSources },
                 maxAmplitude: { value: .5*noOfSources },
@@ -29,6 +42,7 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 omegaT: { value: 0.0 },
                 plotType: { value: 3 },	// 0 = intensity, 1 = intensity & phase, 2 = phase, 3 = real part only
                 brightnessFactor: { value: 1 },
+                opacity: { value: opacity }
                 // xPlaneMatrix: { value: xPlane.matrix },
             },
             // wireframe: true,
@@ -60,6 +74,7 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 uniform float omegaT;
                 uniform int plotType;	// 0 = intensity, 1 = intensity & phase, 2 = phase, 3 = real part only
                 uniform float brightnessFactor;
+                uniform float opacity;
 
                 // from https://gist.github.com/983/e170a24ae8eba2cd174f
                 vec3 hsv2rgb(vec3 c) {
@@ -99,24 +114,24 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                     switch(plotType) {
                         case 3:	// real part
                         float a = brightnessFactor*amplitude.x/maxAmplitude;
-                            gl_FragColor = vec4(a, 0, -a, 1);
+                            gl_FragColor = vec4(a, 0, -a, opacity);
                             break;
                         case 2:	// phase only
                             // float phase = atan(amplitude.y, amplitude.x);	//  mod(atan(amplitude.y, amplitude.x) + omegaT, 2.0*pi);	// -pi .. pi
                             // float hue = 0.5 + 0.5*phase/M_PI;	// 0 .. 1
-                            gl_FragColor = vec4(hsv2rgb(vec3(calculateHue(amplitude), 1.0, 1.0)), 1.0);
+                            gl_FragColor = vec4(hsv2rgb(vec3(calculateHue(amplitude), 1.0, 1.0)), opacity);
                             break;
                         case 1:	// phase & intensity
                             // float intensity = dot(amplitude, amplitude)/maxIntensity;
                             // float phase = atan(amplitude.y, amplitude.x);	//  mod(atan(amplitude.y, amplitude.x) + omegaT, 2.0*pi);	// -pi .. pi
                             // float hue = 0.5 + 0.5*phase/M_PI;	// 0 .. 1
-                            gl_FragColor = vec4(hsv2rgb(vec3(calculateHue(amplitude), 1.0, brightnessFactor*calculateIntensity(amplitude))), 1.0);
+                            gl_FragColor = vec4(hsv2rgb(vec3(calculateHue(amplitude), 1.0, brightnessFactor*calculateIntensity(amplitude))), opacity);
                             break;
                         case 0:	// intensity only
                         default:
                             // float intensity = dot(amplitude, amplitude)/maxIntensity;
                             float intensity = brightnessFactor*calculateIntensity(amplitude);
-                            gl_FragColor = vec4(intensity, intensity, intensity, 1);
+                            gl_FragColor = vec4(intensity, intensity, intensity, opacity);
                     }
                     // amplitude.y = 0.0;
                     // gl_FragColor = vec4(abs(v_pos), 1);
@@ -130,23 +145,27 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                     // gl_FragColor = vec4(hsv2rgb(vec3(hue, 1.0, intensity)), 1.0);
                     // gl_FragColor = vec4(amplitude.x/maxAmplitude, 0, 0, 1);
                 }
-            `
+            `,
+            transparent: true,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
         });
 
         this.noOfSources = noOfSources;
         this.m = m;
         this.fieldType = fieldType;
         this.sourceExtent = sourceExtent;
+        this.sourceZ = sourceZ;
 
         // console.log("interferenceMaterial::constructor: Hi!");
     }
 
     updateSources() {
-        this.uniforms.sourcePositions.value  = InterferenceMaterial.createSourcePositions ( this.noOfSources, this.fieldType, this.sourceExtent );
+        this.uniforms.sourcePositions.value  = InterferenceMaterial.createSourcePositions ( this.noOfSources, this.fieldType, this.sourceExtent, this.sourceZ );
         this.uniforms.sourceAmplitudes.value = InterferenceMaterial.createSourceAmplitudes( this.noOfSources, this.m );
     }
 
-    static createSourcePositions( noOfSources, fieldType, sourceExtent ) {
+    static createSourcePositions( noOfSources, fieldType, sourceExtent, sourceZ ) {
 
         console.log("createSourcePositions: noOfSources = " + noOfSources + ", fieldType = " + fieldType + ", sourceExtent = " + sourceExtent);
 
@@ -158,17 +177,17 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
 	    for(; i<noOfSources; i++) {
             switch( fieldType ) {
                 case 0:	// line
-                    sourcePositions.push(new THREE.Vector3(sourceExtent*(noOfSources == 1?0:(i/(noOfSources-1)-0.5)), 0, 0));
+                    sourcePositions.push(new THREE.Vector3(sourceExtent*(noOfSources == 1?0:(i/(noOfSources-1)-0.5)), 0, sourceZ));
                     break;			
                 case 1:	// ring
                 default:
                     let phi = 2.0*Math.PI*i/noOfSources;	// azimuthal angle
-                    sourcePositions.push(new THREE.Vector3(0.5*sourceExtent*Math.cos(phi), 0.5*sourceExtent*Math.sin(phi), 0));
+                    sourcePositions.push(new THREE.Vector3(0.5*sourceExtent*Math.cos(phi), 0.5*sourceExtent*Math.sin(phi), sourceZ));
             }
         }
         
         for(; i<maxNoOfSources; i++) {
-            sourcePositions.push(new THREE.Vector3(0, 0, 0));
+            sourcePositions.push(new THREE.Vector3(0, 0, sourceZ));
         }
 
         return sourcePositions;
