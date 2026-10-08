@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';	// see https://threejs.org/docs/#manual/en/introduction/How-to-create-VR-content
+import { installCanvasContextMenu } from './canvasContextMenu.js';
 
 import { InterferenceMaterial, maxNoOfSources } from './interferenceMaterial.js';
 import { JApp, render } from './JApp.js';
@@ -35,9 +36,11 @@ class Instaferogram extends JApp {
         super( 'Instaferogram', 'the premier interactive tool ...' );
 
 		this.interferenceMaterialSemiTransparent = 
-			new InterferenceMaterial(2, 0, 2, 0, 0, this.opacity);
+			new InterferenceMaterial(0, 2, 0, 2, 0, 0, this.opacity);
+		this.interferenceMaterialSemiTransparent.updateSources();
 		this.interferenceMaterialOpaque = 
-			new InterferenceMaterial(2, 0, 2, 0, 0, 1);
+			new InterferenceMaterial(0, 2, 0, 2, 0, 0, 1);
+		this.interferenceMaterialOpaque.updateSources();
 		this.interferenceMaterialOpaque.transparent = false;
 		this.interferenceMaterialOpaque.blending = THREE.NoBlending;
 		this.interferenceMaterialOpaque.depthWrite = true;
@@ -50,7 +53,7 @@ class Instaferogram extends JApp {
 	createRendererEtc() {
 		// create scene
 		this.scene = new THREE.Scene();
-		this.scene.background = new THREE.Color( 'rgb(10,10,10)' );
+		this.scene.background = new THREE.Color( 'rgb(64, 64, 64)' );
 
 		// create camera
 		this.camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 0.0001, 151 );
@@ -62,7 +65,8 @@ class Instaferogram extends JApp {
 		this.renderer.xr.enabled = true;	// see https://threejs.org/docs/#manual/en/introduction/How-to-create-VR-content
 		document.body.appendChild( VRButton.createButton( this.renderer ) );	// see https://threejs.org/docs/#manual/en/introduction/How-to-create-VR-content
 		document.body.appendChild( this.renderer.domElement );
-		
+		installCanvasContextMenu(this.renderer.domElement, { filename: 'Instaferogram.png' });
+
 		// this.interferenceMaterialSemiTransparent= ;
 		this.addPlanes();
 		this.addSphere();
@@ -204,10 +208,19 @@ class Instaferogram extends JApp {
 	beamHGType = 4;
 	beamLGType = 5;
 	beamBesselType = 6;
-	fieldTypes = ['Points on line', 'Points on circle', 'Parallel lines', 'Uniform plane waves', 'Hermite-Gaussian beam', 'Laguerre-Gaussian beam', 'Bessel beam'];
+	fieldTypes = {
+		'Points on line': 0, 
+		'Points on circle': 1, 
+		'Parallel lines': 2
+		// 'Uniform plane waves', 
+		// 'Hermite-Gaussian beam', 
+		// 'Laguerre-Gaussian beam', 
+		// 'Bessel beam'
+	};
 	
 	getFieldTypeString() {
-		return this.fieldTypes[ this.interferenceMaterialSemiTransparent.fieldType ];
+		return Object.keys(this.fieldTypes).find(k => this.interferenceMaterialSemiTransparent.fieldType[k] === this.interferenceMaterialSemiTransparent.fieldType);
+		// return this.fieldTypes[ this.interferenceMaterialSemiTransparent.fieldType ];
 	}
 
 	intensityType = 0;
@@ -240,6 +253,7 @@ class Instaferogram extends JApp {
 			atanSourceZ: Math.atan(this.interferenceMaterialSemiTransparent.sourceZ),
 			plotType: this.interferenceMaterialSemiTransparent.uniforms.plotType.value,
 			brightness: Instaferogram.getBaseLog(2, this.interferenceMaterialSemiTransparent.uniforms.brightnessFactor.value), // exposure compensation
+			showSourcePlane: this.sourceZPlane.visible,
 			showXPlane: this.xPlane.visible,
 			showYPlane: this.yPlane.visible,
 			showZPlane: this.zPlane.visible,
@@ -260,6 +274,7 @@ class Instaferogram extends JApp {
 			r: this.sphere.scale.x,
 			plotRange: this.plotRange,
 			sqrtPlotRange: Math.sqrt(this.plotRange),
+			backgroundColor: '#404040',
 			opacity: this.interferenceMaterialSemiTransparent.uniforms.opacity.value,
 			sqrtOpacity: Math.sqrt(this.interferenceMaterialSemiTransparent.uniforms.opacity.value),
 			semiTransparent: this.interferenceMaterialSemiTransparent.transparent,
@@ -279,7 +294,7 @@ class Instaferogram extends JApp {
 		this.gui = new GUI();
 		// gui.hide();
 
-		let fieldTypeString = ( this.fieldType == 0?`Length of line`:`Diameter of circle`);
+		// let fieldTypeString = ( this.fieldType == 0?`Length of line`:`Diameter of circle`);
 
 		const folderPhysics = this.gui.addFolder( 'Physics' );
 
@@ -295,7 +310,7 @@ class Instaferogram extends JApp {
 			} );
 
 		folderPhysics.add( this.guiVariables, 'fieldType', 
-				Object.fromEntries( this.fieldTypes.map((str, i) => [str, i]) )	// { 'Line': 0, 'Circle': 1 } 
+				this.fieldTypes // Object.fromEntries( this.fieldTypes.map((str, i) => [str, i]) )	// { 'Line': 0, 'Circle': 1 } 
 			)
 			.name('Field type')
 			.onChange( (a) => { 
@@ -328,14 +343,14 @@ class Instaferogram extends JApp {
 				this.interferenceMaterialOpaque.updateSources();}
 		).name('Source size');
 
-		folderPhysics.add( this.guiVariables, 'sourceExtent', 0, 20)
-			.name('source extent')
-			.onChange( (d) => { 
-				this.interferenceMaterialSemiTransparent.sourceExtent = d;
-				this.interferenceMaterialSemiTransparent.updateSources();
-				this.interferenceMaterialOpaque.sourceExtent = d;
-				this.interferenceMaterialOpaque.updateSources();
-			} );
+		// folderPhysics.add( this.guiVariables, 'sourceExtent', 0, 20)
+		// 	.name('source extent')
+		// 	.onChange( (d) => { 
+		// 		this.interferenceMaterialSemiTransparent.sourceExtent = d;
+		// 		this.interferenceMaterialSemiTransparent.updateSources();
+		// 		this.interferenceMaterialOpaque.sourceExtent = d;
+		// 		this.interferenceMaterialOpaque.updateSources();
+		// 	} );
 
 		this.addAtanSlider(
 			folderPhysics,
@@ -390,19 +405,25 @@ class Instaferogram extends JApp {
 				this.interferenceMaterialOpaque.uniforms.plotType.value = t;
 			} );
 
-		folderPlot.add( this.guiVariables, 'brightness', -5, 20, 1/3)
+		folderPlot.add( this.guiVariables, 'brightness', -7, 20, 1/3)
 			.name('Brightness')
 			.onChange( (b) => {
 				this.interferenceMaterialSemiTransparent.uniforms.brightnessFactor.value = Math.pow(2, b);
 				this.interferenceMaterialOpaque.uniforms.brightnessFactor.value = Math.pow(2, b);
 			} );
 
+		folderPlot.add( this.guiVariables, 'showSourcePlane' )
+			.name('Show source plane')
+			.onChange( (s) => {
+				this.sourceZPlane.visible = s;
+			} );
+		
 		folderPlot.add( this.guiVariables, 'showXPlane' )
 			.name('Show <i>x</i> plane')
 			.onChange( (s) => { 
 				this.xPlane.visible = s;
 			} );
-		
+
 		this.addAtanSlider(
 			folderPlot,
 			this.guiVariables, 'atanX',
@@ -496,6 +517,12 @@ class Instaferogram extends JApp {
 			}
 		).name('Square sidelength');
 
+		folderPlot.addColor( this.guiVariables, 'backgroundColor' )
+			.name('Background color')
+			.onChange( (color) => {
+				this.scene.background = new THREE.Color(color);
+			} );
+
 		// folderPlot.add( this.guiVariables, 'plotRange', 0, 1000, 1)
 		// 	.name('Square sidelength')
 		// 	.onChange( (plotRange) => {
@@ -505,7 +532,9 @@ class Instaferogram extends JApp {
 		// 		this.zPlane.scale.set(plotRange, plotRange, plotRange);
 		// 	} );
 
-		folderPlot.add( this.guiVariables, 'showXYZPlanes' )
+		const folderPlandCloud = this.gui.addFolder( 'Plane Cloud' );
+
+		folderPlandCloud.add( this.guiVariables, 'showXYZPlanes' )
 			.name('Show <i>xyz</i> plane cloud')
 			.onChange( (s) => {
 				this.xPlaneGroup.visible = s;
@@ -513,26 +542,28 @@ class Instaferogram extends JApp {
 				this.zPlaneGroup.visible = s;
 			} );
 
-		folderPlot.add( this.guiVariables, 'noOfXPlanes', 1, 500, 1 )
+		folderPlandCloud.add( this.guiVariables, 'noOfXPlanes', 1, 500, 1 )
 			.name('No. of <i>x</i> planes')
 			.onFinishChange( (count) => {
 				this.noOfXPlanes = count;
 				this.rebuildPlaneGroup( this.xPlaneGroup, count, (position) => this.createXPlane( position, this.interferenceMaterialSemiTransparent ) );
 			} );
 
-		folderPlot.add( this.guiVariables, 'noOfYPlanes', 1, 500, 1 )
+		folderPlandCloud.add( this.guiVariables, 'noOfYPlanes', 1, 500, 1 )
 			.name('No. of <i>y</i> planes')
 			.onFinishChange( (count) => {
 				this.noOfYPlanes = count;
 				this.rebuildPlaneGroup( this.yPlaneGroup, count, (position) => this.createYPlane( position, this.interferenceMaterialSemiTransparent ) );
 			} );
 
-		folderPlot.add( this.guiVariables, 'noOfZPlanes', 1, 500, 1 )
+		folderPlandCloud.add( this.guiVariables, 'noOfZPlanes', 1, 500, 1 )
 			.name('No. of <i>z</i> planes')
 			.onFinishChange( (count) => {
 				this.noOfZPlanes = count;
 				this.rebuildPlaneGroup( this.zPlaneGroup, count, (position) => this.createZPlane( position, this.interferenceMaterialSemiTransparent ) );
 			} );
+
+		folderPlandCloud.close();
 
 		// folderPlot.add( this.guiVariables, 'showXPlaneGroup' )
 		// 	.name('Show <i>x</i> plane group')
@@ -559,7 +590,7 @@ class Instaferogram extends JApp {
 		// 	} );
 
 		this.addSqrtSlider(
-			folderPlot,
+			folderPlandCloud,
 			this.guiVariables, 'sqrtOpacity',
 			0,
 			1,

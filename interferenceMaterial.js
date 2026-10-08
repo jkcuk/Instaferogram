@@ -5,20 +5,19 @@ const maxNoOfSources = 100;
 class InterferenceMaterial extends THREE.ShaderMaterial {
 
     // parameters
-    fieldType = 0;	// 0 = line of point sources, 1 = ring of point sources
 	noOfSources = 2;
 	sourceExtent = 1.0;	// length of line of point sources or diameter of ring of point sources
 	m = 0;
+    keepPowerConstant = true;
 
     // variables
-    sourceTypes;    // 0 = point source, 1 = line source, 2 = uniform plane wave, 3 = Hermite-Gaussian (HG) beam, 4 = Laguerre-Gaussian (LG) beam, 5 = Bessel beam
+    // sourceTypes;    // 0 = point source, 1 = line source, 2 = uniform plane wave, 3 = Hermite-Gaussian (HG) beam, 4 = Laguerre-Gaussian (LG) beam, 5 = Bessel beam
     sourcePositions;
-    sourceAmplitudesRe; // real part of complex amplitudes
-    sourceAmplitudesIm; // imaginary part of complex amplitudes
-    sourceDirections;   // for line source: line direction; for other beams: propagation direction
-    sourceAdditionalFloats1;	// for HG & LG beams: beam waist, w0; for Bessel beams: cone angle, theta
-    sourceAdditionalInts1;	// for Hermite-Gaussian beams: horizontal index, m; for Laguerre-Gaussian beams & Bessel beams: azimuthal index, l
-    sourceAdditionalInts2;	// for Hermite-Gaussian beams: vertical index, n; for Laguerre-Gaussian beams: radial index, p
+    sourceAmplitudes; // array of {real, imaginary} parts of complex amplitudes
+    // sourceDirections;   // for line source: line direction; for other beams: propagation direction
+    // sourceAdditionalFloats1;	// for HG & LG beams: beam waist, w0; for Bessel beams: cone angle, theta
+    // sourceAdditionalInts1;	// for Hermite-Gaussian beams: horizontal index, m; for Laguerre-Gaussian beams & Bessel beams: azimuthal index, l
+    // sourceAdditionalInts2;	// for Hermite-Gaussian beams: vertical index, n; for Laguerre-Gaussian beams: radial index, p
     
     /**
      * Represents a color material.
@@ -29,12 +28,25 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
      * @param {float} omegaT - The phase
      * @param {float} opacity 
      */
-    constructor( noOfSources, fieldType, sourceExtent, m, sourceZ, opacity ) {
+    constructor( 
+        sourceType, // 0 = point sources, 1 = line sources
+        noOfSources, fieldType, sourceExtent, m, sourceZ, opacity ) {
         super({
             side: THREE.DoubleSide,
             uniforms: { 
-                sourcePositions: { value: InterferenceMaterial.createSourcePositions( noOfSources, fieldType, sourceExtent, sourceZ ) },
-                sourceAmplitudes: { value: InterferenceMaterial.createSourceAmplitudes( noOfSources, m ) },
+                // sourceTypes: { value: Array.from( 
+                //     { length: maxNoOfSources },
+                //     () => 0.0
+                // ) },
+                sourceType: { value: sourceType },
+                sourcePositions: { value: Array.from( 
+                    { length: maxNoOfSources },
+                    () => new THREE.Vector3(0, 0, 0)
+                ) },
+                sourceAmplitudes: { value: Array.from( 
+                    { length: maxNoOfSources },
+                    () => new THREE.Vector2(0, 0)
+                ) },
                 noOfSources: { value: noOfSources },
                 maxAmplitude: { value: .5*noOfSources },
                 maxIntensity: { value: .25*noOfSources*noOfSources },
@@ -65,6 +77,8 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
 
                 varying vec3 v_position;
 
+                // uniform int sourceTypes[${maxNoOfSources}];
+                uniform int sourceType;
                 uniform vec3 sourcePositions[${maxNoOfSources}];
                 uniform vec2 sourceAmplitudes[${maxNoOfSources}];
                 uniform int noOfSources;
@@ -94,20 +108,38 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 float calculateIntensity(vec2 amplitude) {
                     return dot(amplitude, amplitude)/maxIntensity;
                 }
+                
+                vec2 calculateSourceAmplitude(int i) {
+                    float d;
+                    float kd;
+                    float a;
+                    switch(sourceType) {
+                    case 0: // point source
+                        float d = distance(v_position, sourcePositions[i]);
+                        kd = k*d - omegaT;
+                        a = 1./d;
+                        break;
+                    case 1: // line source
+                        vec3 r = v_position - sourcePositions[i];
+                        d = sqrt(r.x*r.x + r.z*r.z);
+                        kd = k*d - omegaT;
+                        a = 1./sqrt(d);
+                    }
+                    float c = cos(kd);
+                    float s = sin(kd);
+                    // add to the sum of amplitudes the amplitude due to 
+                    return a*vec2(
+                        sourceAmplitudes[i].x*c - sourceAmplitudes[i].y*s,	// real part = r1 r2 - i1 i2
+                        sourceAmplitudes[i].x*s + sourceAmplitudes[i].y*c	// imaginary part = r1 i2 + r2 i1
+                    );
+                }
 
                 void main() {
                     // this is where the sum of the amplitudes of all individual sources goes
                     vec2 amplitude = vec2(0, 0);
                     for(int i=0; i<noOfSources; i++) {
-                        float d = distance(v_position, sourcePositions[i]);
-                        float kd = k*d - omegaT;
-                        float c = cos(kd);
-                        float s = sin(kd);
-                        // add to the sum of amplitudes the amplitude due to 
-                        amplitude += vec2(
-                            sourceAmplitudes[i].x*c - sourceAmplitudes[i].y*s,	// real part = r1 r2 - i1 i2
-                            sourceAmplitudes[i].x*s + sourceAmplitudes[i].y*c	// imaginary part = r1 i2 + r2 i1
-                        )/d;
+                        // add to the sum of amplitudes the amplitude due to source no. i
+                        amplitude += calculateSourceAmplitude(i);
                         // amplitude += sourcePositions[i].xy;	// sourceAmplitudes[i]/d;
                     }
 
@@ -161,8 +193,18 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
     }
 
     updateSources() {
+        switch( this.fieldType ) {
+            case 2: // parallel line sources
+                this.uniforms.sourceType.value = 1;
+                break;
+            case 0:	// line of point sources
+            case 1: // circle of point sources
+            default:
+                this.uniforms.sourceType.value = 0;
+                break;
+        }
         this.uniforms.sourcePositions.value  = InterferenceMaterial.createSourcePositions ( this.noOfSources, this.fieldType, this.sourceExtent, this.sourceZ );
-        this.uniforms.sourceAmplitudes.value = InterferenceMaterial.createSourceAmplitudes( this.noOfSources, this.m );
+        this.uniforms.sourceAmplitudes.value = InterferenceMaterial.createSourceAmplitudes( this.noOfSources, this.m, this.keepPowerConstant );
     }
 
     static createSourcePositions( noOfSources, fieldType, sourceExtent, sourceZ ) {
@@ -176,10 +218,11 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
     	let i=0;
 	    for(; i<noOfSources; i++) {
             switch( fieldType ) {
-                case 0:	// line
+                case 0:	// line of point sources
+                case 2: // parallel line sources
                     sourcePositions.push(new THREE.Vector3(sourceExtent*(noOfSources == 1?0:(i/(noOfSources-1)-0.5)), 0, sourceZ));
                     break;			
-                case 1:	// ring
+                case 1:	// ring of point sources
                 default:
                     let phi = 2.0*Math.PI*i/noOfSources;	// azimuthal angle
                     sourcePositions.push(new THREE.Vector3(0.5*sourceExtent*Math.cos(phi), 0.5*sourceExtent*Math.sin(phi), sourceZ));
@@ -193,18 +236,20 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
         return sourcePositions;
     }
 
-    static createSourceAmplitudes( noOfSources, m ) {
+    static createSourceAmplitudes( noOfSources, m, keepPowerConstant ) {
 
         let sourceAmplitudes = [];	// (complex) amplitudes
 
         // fill in the elements of all three arrays
         let i=0;
+        let a;
+        if( keepPowerConstant ) { a = 1./noOfSources; } else { a = 1 };
         for(; i<noOfSources; i++) {
             let phi = 2.0*Math.PI*i/noOfSources;	// azimuthal angle
-            sourceAmplitudes.push(new THREE.Vector2(Math.cos(m*phi), Math.sin(m*phi)));
+            sourceAmplitudes.push(new THREE.Vector2(a*Math.cos(m*phi), a*Math.sin(m*phi)));
         }
         for(; i<maxNoOfSources; i++) {
-            sourceAmplitudes.push(new THREE.Vector2(1, 0));
+            sourceAmplitudes.push(new THREE.Vector2(0, 0));
         }
 
         return sourceAmplitudes;
