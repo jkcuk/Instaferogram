@@ -14,6 +14,15 @@ class Instaferogram extends JApp {
 	interferenceMaterialSemiTransparent;
 	scene;
 	sourceZPlane;
+	sourceMarkers = new THREE.Group();
+	sourceMarkerGeometry = new THREE.SphereGeometry(0.12, 32, 24);
+	sourceLineGeometry = new THREE.CylinderGeometry(0.025, 0.025, 1, 24);
+	sourceMarkerMaterial = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
+	sourceDragPlane = new THREE.Plane();
+	sourceRaycaster = new THREE.Raycaster();
+	sourcePointer = new THREE.Vector2();
+	draggedSource = null;
+	draggedPointerId = null;
 	xPlane;
 	yPlane;
 	zPlane;
@@ -56,7 +65,7 @@ class Instaferogram extends JApp {
 		this.scene.background = new THREE.Color( 'rgb(64, 64, 64)' );
 
 		// create camera
-		this.camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 0.0001, 151 );
+		this.camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 0.1, 151 );
 		this.camera.position.z = 20;
 		
 		this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -72,6 +81,7 @@ class Instaferogram extends JApp {
 		this.addSphere();
 
 		this.addOrbitControls();
+		this.installSourceDragging();
     	// this.controls = new OrbitControls( this.camera, this.renderer.domElement );
 	}
 
@@ -84,6 +94,9 @@ class Instaferogram extends JApp {
 	addPlanes() {
 		this.sourceZPlane = this.createZPlane( this.interferenceMaterialOpaque.sourceZ, this.interferenceMaterialOpaque );
 		this.scene.add( this.sourceZPlane );
+		this.sourceMarkers.visible = false;
+		this.scene.add(this.sourceMarkers);
+		this.updateSourceMarkers();
 
 		this.xPlane = this.createXPlane( 0, this.interferenceMaterialOpaque );
 		this.yPlane = this.createYPlane( 0, this.interferenceMaterialOpaque );
@@ -181,10 +194,106 @@ class Instaferogram extends JApp {
 	
 		this.controls.enablePan = true;
 		this.controls.enableZoom = true;
-	
+
+		this.controls.minDistance = this.camera.near;
 		this.controls.maxDistance = 50;
 	
 		// controls.maxPolarAngle = Math.PI;
+	}
+
+	updateSources() {
+		this.interferenceMaterialSemiTransparent.updateSources();
+		this.interferenceMaterialOpaque.updateSources();
+		this.updateSourceMarkers();
+	}
+
+	updateSourceMarkers() {
+		const positions = this.interferenceMaterialOpaque.uniforms.sourcePositions.value;
+		const noOfSources = this.interferenceMaterialOpaque.noOfSources;
+		const isParallelLines = this.interferenceMaterialOpaque.fieldType === this.parallelLinesType;
+		const geometry = isParallelLines ? this.sourceLineGeometry : this.sourceMarkerGeometry;
+
+		while (this.sourceMarkers.children.length < noOfSources) {
+			const marker = new THREE.Mesh(geometry, this.sourceMarkerMaterial);
+			marker.renderOrder = 10;
+			this.sourceMarkers.add(marker);
+		}
+		while (this.sourceMarkers.children.length > noOfSources) {
+			this.sourceMarkers.remove(this.sourceMarkers.children[this.sourceMarkers.children.length - 1]);
+		}
+
+		for (let i = 0; i < noOfSources; i++) {
+			const marker = this.sourceMarkers.children[i];
+			marker.geometry = geometry;
+			marker.position.copy(positions[i]);
+			marker.scale.set(1, isParallelLines ? this.sourceZPlane.scale.y : 1, 1);
+			if (isParallelLines) marker.position.y = this.sourceZPlane.position.y;
+		}
+	}
+
+	installSourceDragging() {
+		const canvas = this.renderer.domElement;
+
+		const setPointer = (event) => {
+			const bounds = canvas.getBoundingClientRect();
+			this.sourcePointer.set(
+				2 * (event.clientX - bounds.left) / bounds.width - 1,
+				1 - 2 * (event.clientY - bounds.top) / bounds.height
+			);
+			this.sourceRaycaster.setFromCamera(this.sourcePointer, this.camera);
+		};
+
+		canvas.addEventListener('pointerdown', (event) => {
+			if (event.button !== 0 || this.draggedSource || !this.sourceMarkers.visible) return;
+
+			setPointer(event);
+			const [intersection] = this.sourceRaycaster.intersectObjects(this.sourceMarkers.children);
+			if (!intersection) return;
+
+			this.draggedSource = intersection.object;
+			this.draggedPointerId = event.pointerId;
+			this.sourceDragPlane.normal.set(0, 0, 1);
+			this.sourceDragPlane.constant = -this.interferenceMaterialOpaque.sourceZ;
+			this.controls.enabled = false;
+			canvas.setPointerCapture(event.pointerId);
+			canvas.style.cursor = 'grabbing';
+			event.preventDefault();
+		}, true);
+
+		canvas.addEventListener('pointermove', (event) => {
+			if (!this.draggedSource) {
+				if (!this.sourceMarkers.visible) return;
+				setPointer(event);
+				canvas.style.cursor = this.sourceRaycaster.intersectObjects(this.sourceMarkers.children).length ? 'grab' : '';
+				return;
+			}
+			if (event.pointerId !== this.draggedPointerId) return;
+
+			setPointer(event);
+			const point = this.sourceRaycaster.ray.intersectPlane(this.sourceDragPlane, new THREE.Vector3());
+			if (!point) return;
+
+			const sourceIndex = this.sourceMarkers.children.indexOf(this.draggedSource);
+			if (this.interferenceMaterialOpaque.fieldType === this.parallelLinesType) {
+				point.y = this.sourceZPlane.position.y;
+			}
+			this.draggedSource.position.copy(point);
+			this.interferenceMaterialSemiTransparent.uniforms.sourcePositions.value[sourceIndex].copy(point);
+			this.interferenceMaterialOpaque.uniforms.sourcePositions.value[sourceIndex].copy(point);
+		});
+
+		const stopDragging = (event) => {
+			if (!this.draggedSource || event.pointerId !== this.draggedPointerId) return;
+
+			this.draggedSource = null;
+			this.draggedPointerId = null;
+			this.controls.enabled = true;
+			canvas.style.cursor = '';
+			if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+		};
+
+		canvas.addEventListener('pointerup', stopDragging);
+		canvas.addEventListener('pointercancel', stopDragging);
 	}
 	
 	timer = new THREE.Timer();
@@ -253,6 +362,7 @@ class Instaferogram extends JApp {
 			atanSourceZ: Math.atan(this.interferenceMaterialSemiTransparent.sourceZ),
 			plotType: this.interferenceMaterialSemiTransparent.uniforms.plotType.value,
 			brightness: Instaferogram.getBaseLog(2, this.interferenceMaterialSemiTransparent.uniforms.brightnessFactor.value), // exposure compensation
+			showSourcePositions: this.sourceMarkers.visible,
 			showSourcePlane: this.sourceZPlane.visible,
 			showXPlane: this.xPlane.visible,
 			showYPlane: this.yPlane.visible,
@@ -315,9 +425,8 @@ class Instaferogram extends JApp {
 			.name('Field type')
 			.onChange( (a) => { 
 				this.interferenceMaterialSemiTransparent.fieldType = a; 
-				this.interferenceMaterialSemiTransparent.updateSources();
 				this.interferenceMaterialOpaque.fieldType = a;
-				this.interferenceMaterialOpaque.updateSources();
+				this.updateSources();
 				// recreateGUI(); 
 			} );
 		
@@ -325,9 +434,8 @@ class Instaferogram extends JApp {
 			.name('Topolog. charge <i>m</i>')
 			.onChange( (m) => { 
 				this.interferenceMaterialSemiTransparent.m = m; 
-				this.interferenceMaterialSemiTransparent.updateSources();
 				this.interferenceMaterialOpaque.m = m;
-				this.interferenceMaterialOpaque.updateSources();
+				this.updateSources();
 			} );
 		
 		this.addSqrtSlider(
@@ -338,9 +446,8 @@ class Instaferogram extends JApp {
 			(sqrtSourceExtent) => { 
 				this.guiVariables.sqrtSourceExtent = sqrtSourceExtent;
 				this.interferenceMaterialSemiTransparent.sourceExtent = Math.pow(sqrtSourceExtent, 2);
-				this.interferenceMaterialSemiTransparent.updateSources();
 				this.interferenceMaterialOpaque.sourceExtent = Math.pow(sqrtSourceExtent, 2);
-				this.interferenceMaterialOpaque.updateSources();}
+				this.updateSources();}
 		).name('Source size');
 
 		// folderPhysics.add( this.guiVariables, 'sourceExtent', 0, 20)
@@ -361,9 +468,8 @@ class Instaferogram extends JApp {
 				this.guiVariables.atanSourceZ = atanSourceZ;
 				let sourceZ = Math.tan(atanSourceZ);
 				this.interferenceMaterialSemiTransparent.sourceZ = sourceZ;
-				this.interferenceMaterialSemiTransparent.updateSources();
 				this.interferenceMaterialOpaque.sourceZ = sourceZ;
-				this.interferenceMaterialOpaque.updateSources();
+				this.updateSources();
 				this.sourceZPlane.position.set(0, 0, sourceZ);
 			}
 		).name('<i>z</i><sub>source</sub>');
@@ -382,10 +488,9 @@ class Instaferogram extends JApp {
 			.onChange( (noOfSources) => { 
 				this.interferenceMaterialSemiTransparent.noOfSources = noOfSources;
 				this.interferenceMaterialSemiTransparent.uniforms.noOfSources.value = noOfSources;
-				this.interferenceMaterialSemiTransparent.updateSources();
 				this.interferenceMaterialOpaque.noOfSources = noOfSources;
 				this.interferenceMaterialOpaque.uniforms.noOfSources.value = noOfSources;
-				this.interferenceMaterialOpaque.updateSources();
+				this.updateSources();
 			} );
 		
 		// change menu according to field type
@@ -416,6 +521,12 @@ class Instaferogram extends JApp {
 			.name('Show source plane')
 			.onChange( (s) => {
 				this.sourceZPlane.visible = s;
+			} );
+
+		folderPlot.add( this.guiVariables, 'showSourcePositions' )
+			.name('Show source positions')
+			.onChange( (s) => {
+				this.sourceMarkers.visible = s;
 			} );
 		
 		folderPlot.add( this.guiVariables, 'showXPlane' )
@@ -514,6 +625,7 @@ class Instaferogram extends JApp {
 				this.xPlaneGroup.scale.set(this.plotRange/10, this.plotRange/10, this.plotRange/10);
 				this.yPlaneGroup.scale.set(this.plotRange/10, this.plotRange/10, this.plotRange/10);
 				this.zPlaneGroup.scale.set(this.plotRange/10, this.plotRange/10, this.plotRange/10);
+				this.updateSourceMarkers();
 			}
 		).name('Square sidelength');
 
