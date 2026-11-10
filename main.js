@@ -752,11 +752,11 @@ class Instaferogram extends JApp {
 				// recreateGUI(); 
 			} );
 		
-		folderPhysics.add( this.guiVariables, 'm', -10, 10, 1)
-			.name('Topolog. charge <i>m</i>')
-			.onChange( (m) => { 
-				this.interferenceMaterialSemiTransparent.m = m; 
-				this.interferenceMaterialOpaque.m = m;
+		folderPhysics.add( this.guiVariables, 'm', -10*Math.PI, 10*Math.PI, 0.01)
+			.name('First-last phase diff.')
+			.onChange( (mPi) => { 
+				this.interferenceMaterialSemiTransparent.m = mPi/Math.PI; 
+				this.interferenceMaterialOpaque.m = mPi/Math.PI;
 				this.updateSources({ preservePositions: true, preserveAmplitudes: false });
 			} );
 		
