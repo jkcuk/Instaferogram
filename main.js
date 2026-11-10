@@ -215,7 +215,7 @@ class Instaferogram extends JApp {
 	updateSources({ preservePositions = false, preserveAmplitudes = true, preserveDirections = true, previousSourceCount = this.interferenceMaterialSemiTransparent.noOfSources } = {}) {
 		const oldPositions = this.interferenceMaterialSemiTransparent.uniforms.sourcePositions.value.map((position) => position.clone());
 		const oldAmplitudes = this.interferenceMaterialSemiTransparent.uniforms.sourceAmplitudes.value.map((amplitude) => amplitude.clone());
-		const oldDirections = this.interferenceMaterialSemiTransparent.uniforms.sourceDirections.value.map((direction) => direction.clone());
+		const oldDirections = this.interferenceMaterialSemiTransparent.sourceDirections.map((direction) => direction.clone());
 
 		this.interferenceMaterialSemiTransparent.updateSources();
 		this.interferenceMaterialOpaque.updateSources();
@@ -225,7 +225,14 @@ class Instaferogram extends JApp {
 			for (let i = 0; i < count; i++) {
 				if (preservePositions) material.uniforms.sourcePositions.value[i].copy(oldPositions[i]);
 				if (preserveAmplitudes) material.uniforms.sourceAmplitudes.value[i].copy(oldAmplitudes[i]);
-				if (preserveDirections) material.uniforms.sourceDirections.value[i].copy(oldDirections[i]);
+				if (preserveDirections) {
+					material.sourceDirections[i].copy(oldDirections[i]);
+				}
+			}
+			material.uniforms.lineDirection.value.copy(material.sourceDirections[0]);
+			material.uniforms.sourceZ.value = material.sourceZ;
+			if (material.fieldType === this.uniformPlaneWavesType) {
+				material.uniforms.sourcePositions.value = material.sourceDirections;
 			}
 		}
 
@@ -234,8 +241,9 @@ class Instaferogram extends JApp {
 	}
 
 	updateSourceMarkers() {
-		const positions = this.interferenceMaterialOpaque.uniforms.sourcePositions.value;
-		const directions = this.interferenceMaterialOpaque.uniforms.sourceDirections.value;
+		const material = this.interferenceMaterialOpaque;
+		const positions = material.uniforms.sourcePositions.value;
+		const directions = material.sourceDirections;
 		const noOfSources = this.interferenceMaterialOpaque.noOfSources;
 		const isParallelLines = this.interferenceMaterialOpaque.fieldType === this.parallelLinesType;
 		const isPlaneWave = this.interferenceMaterialOpaque.fieldType === this.uniformPlaneWavesType;
@@ -259,7 +267,7 @@ class Instaferogram extends JApp {
 		for (let i = 0; i < noOfSources; i++) {
 			const marker = this.sourceMarkers.children[i];
 			if (isPlaneWave) {
-				const origin = positions[i];
+				const origin = new THREE.Vector3(0, 0, material.sourceZ);
 				const direction = directions[i].clone().normalize();
 				const k = this.interferenceMaterialOpaque.uniforms.k.value;
 				marker.userData.arrow.position.copy(origin);
@@ -373,9 +381,11 @@ class Instaferogram extends JApp {
 		}
 
 		const index = this.guiVariables.sourceNumber - 1;
-		const position = material.uniforms.sourcePositions.value[index];
+		const position = material.fieldType === this.uniformPlaneWavesType
+			? new THREE.Vector3(0, 0, material.sourceZ)
+			: material.uniforms.sourcePositions.value[index];
 		const amplitude = material.uniforms.sourceAmplitudes.value[index];
-		const direction = material.uniforms.sourceDirections.value[index];
+		const direction = material.sourceDirections[index];
 		this.guiVariables.sourceX = position.x;
 		this.guiVariables.sourceY = position.y;
 		this.guiVariables.sourceZPosition = position.z;
@@ -418,13 +428,16 @@ class Instaferogram extends JApp {
 		} else if (property === 'sourceLineAngle') {
 			const angle = value * Math.PI / 180;
 			const direction = new THREE.Vector3(Math.sin(angle), Math.cos(angle), 0);
-			for (const material of materials) material.uniforms.sourceDirections.value[index].copy(direction);
+			for (const material of materials) {
+				for (const sourceDirection of material.sourceDirections) sourceDirection.copy(direction);
+				material.uniforms.lineDirection.value.copy(direction);
+			}
 		} else if (property === 'sourceKX' || property === 'sourceKY' || property === 'sourceKZ') {
 			const axis = { sourceKX: 'x', sourceKY: 'y', sourceKZ: 'z' }[property];
 			const otherAxes = ['x', 'y', 'z'].filter((component) => component !== axis);
 			const waveNumber = this.interferenceMaterialOpaque.uniforms.k.value;
 			const componentValue = THREE.MathUtils.clamp(value, -waveNumber, waveNumber);
-			const current = this.interferenceMaterialOpaque.uniforms.sourceDirections.value[index]
+			const current = this.interferenceMaterialOpaque.sourceDirections[index]
 				.clone()
 				.multiplyScalar(waveNumber);
 			const remainingMagnitude = Math.sqrt(Math.max(0, waveNumber * waveNumber - componentValue * componentValue));
@@ -436,7 +449,8 @@ class Instaferogram extends JApp {
 			waveVector[otherAxes[0]] = remaining.x;
 			waveVector[otherAxes[1]] = remaining.y;
 			for (const material of materials) {
-				material.uniforms.sourceDirections.value[index].copy(waveVector).normalize();
+				material.sourceDirections[index].copy(waveVector).normalize();
+				material.uniforms.sourcePositions.value[index].copy(material.sourceDirections[index]);
 			}
 		} else {
 			const amplitude = this.interferenceMaterialOpaque.uniforms.sourceAmplitudes.value[index];
@@ -507,8 +521,10 @@ class Instaferogram extends JApp {
 				const point = this.sourceRaycaster.ray.intersectSphere(this.sourceDragSphere, new THREE.Vector3());
 				if (!point) return;
 				const direction = point.sub(this.sourceDragSphere.center).normalize();
-				this.interferenceMaterialSemiTransparent.uniforms.sourceDirections.value[sourceIndex].copy(direction);
-				this.interferenceMaterialOpaque.uniforms.sourceDirections.value[sourceIndex].copy(direction);
+				this.interferenceMaterialSemiTransparent.sourceDirections[sourceIndex].copy(direction);
+				this.interferenceMaterialOpaque.sourceDirections[sourceIndex].copy(direction);
+				this.interferenceMaterialSemiTransparent.uniforms.sourcePositions.value[sourceIndex].copy(direction);
+				this.interferenceMaterialOpaque.uniforms.sourcePositions.value[sourceIndex].copy(direction);
 			} else {
 				const point = this.sourceRaycaster.ray.intersectPlane(this.sourceDragPlane, new THREE.Vector3());
 				if (!point) return;

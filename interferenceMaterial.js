@@ -44,10 +44,8 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                     { length: maxNoOfSources },
                     () => new THREE.Vector3(0, 0, 0)
                 ) },
-                sourceDirections: { value: Array.from(
-                    { length: maxNoOfSources },
-                    () => new THREE.Vector3(0, 1, 0)
-                ) },
+                lineDirection: { value: new THREE.Vector3(0, 1, 0) },
+                sourceZ: { value: sourceZ },
                 sourceAmplitudes: { value: Array.from( 
                     { length: maxNoOfSources },
                     () => new THREE.Vector2(0, 0)
@@ -85,7 +83,8 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 // uniform int sourceTypes[${maxNoOfSources}];
                 uniform int sourceType;
                 uniform vec3 sourcePositions[${maxNoOfSources}];
-                uniform vec3 sourceDirections[${maxNoOfSources}];
+                uniform vec3 lineDirection;
+                uniform float sourceZ;
                 uniform vec2 sourceAmplitudes[${maxNoOfSources}];
                 uniform int noOfSources;
                 uniform float maxAmplitude;
@@ -127,14 +126,13 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                         break;
                     case 1: // line source
                         vec3 r = v_position - sourcePositions[i];
-                        vec3 lineDirection = normalize(sourceDirections[i]);
-                        vec3 perpendicular = r - dot(r, lineDirection)*lineDirection;
+                        vec3 perpendicular = r - dot(r, normalize(lineDirection))*normalize(lineDirection);
                         d = max(length(perpendicular), 0.00001);
                         kd = k*d - omegaT;
                         a = 1./sqrt(d);
                         break;
                     case 2: // uniform plane wave
-                        kd = k*dot(sourceDirections[i], v_position - sourcePositions[i]) - omegaT;
+                        kd = k*dot(sourcePositions[i], v_position - vec3(0.0, 0.0, sourceZ)) - omegaT;
                         a = 1.;
                         break;
                     }
@@ -219,8 +217,12 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 this.uniforms.sourceType.value = 0;
                 break;
         }
-        this.uniforms.sourcePositions.value  = InterferenceMaterial.createSourcePositions ( this.noOfSources, this.fieldType, this.sourceExtent, this.sourceZ );
-        this.uniforms.sourceDirections.value = InterferenceMaterial.createSourceDirections( this.noOfSources, this.fieldType );
+        this.sourceDirections = InterferenceMaterial.createSourceDirections( this.noOfSources, this.fieldType );
+        this.uniforms.lineDirection.value.copy(this.sourceDirections[0]);
+        this.uniforms.sourceZ.value = this.sourceZ;
+        this.uniforms.sourcePositions.value = this.fieldType === 3
+            ? this.sourceDirections
+            : InterferenceMaterial.createSourcePositions(this.noOfSources, this.fieldType, this.sourceExtent, this.sourceZ);
         this.uniforms.sourceAmplitudes.value = InterferenceMaterial.createSourceAmplitudes( this.noOfSources, this.m, this.keepPowerConstant );
     }
 
