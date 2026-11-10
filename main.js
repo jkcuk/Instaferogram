@@ -22,12 +22,20 @@ class Instaferogram extends JApp {
 		new THREE.SphereGeometry(1, 32, 24),
 		new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.2, depthWrite: false })
 	);
+	sourceDragGuide = new THREE.Line(
+		new THREE.BufferGeometry(),
+		new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 0.15, gapSize: 0.1, depthTest: true })
+	);
 	sourceDragTargets = [];
 	sourceMarkerMode = null;
 	sourceDragPlane = new THREE.Plane();
 	sourceDragSphere = new THREE.Sphere();
 	sourceRaycaster = new THREE.Raycaster();
 	sourcePointer = new THREE.Vector2();
+	sourceDragStart = new THREE.Vector3();
+	sourceDragStartPointer = new THREE.Vector2();
+	sourceDragScreenAxis = new THREE.Vector2();
+	draggedSourcePerpendicular = false;
 	draggedSource = null;
 	draggedSourceIndex = -1;
 	draggedPointerId = null;
@@ -107,6 +115,9 @@ class Instaferogram extends JApp {
 		this.sourceDirectionSphere.visible = false;
 		this.scene.add(this.sourceMarkers);
 		this.scene.add(this.sourceDirectionSphere);
+		this.sourceDragGuide.visible = false;
+		this.sourceDragGuide.renderOrder = 11;
+		this.scene.add(this.sourceDragGuide);
 		this.updateSourceMarkers();
 
 		this.xPlane = this.createXPlane( 0, this.interferenceMaterialOpaque );
@@ -497,8 +508,29 @@ class Instaferogram extends JApp {
 				this.sourceDragSphere.center.set(0, 0, this.interferenceMaterialOpaque.sourceZ);
 				this.sourceDragSphere.radius = this.interferenceMaterialOpaque.uniforms.k.value;
 			} else {
-				this.sourceDragPlane.normal.set(0, 0, 1);
-				this.sourceDragPlane.constant = -this.interferenceMaterialOpaque.sourceZ;
+				const sourcePosition = this.interferenceMaterialOpaque.uniforms.sourcePositions.value[this.draggedSourceIndex];
+				this.sourceDragStart.copy(sourcePosition);
+				this.sourceDragStartPointer.set(event.clientX, event.clientY);
+				this.draggedSourcePerpendicular = event.shiftKey || this.guiVariables.perpendicularSourceDrag;
+				if (this.draggedSourcePerpendicular) {
+					const guideHalfLength = this.plotRange;
+					this.sourceDragGuide.geometry.setFromPoints([
+						sourcePosition.clone().add(new THREE.Vector3(0, 0, -guideHalfLength)),
+						sourcePosition.clone().add(new THREE.Vector3(0, 0, guideHalfLength))
+					]);
+					this.sourceDragGuide.computeLineDistances();
+					this.sourceDragGuide.visible = true;
+					const bounds = canvas.getBoundingClientRect();
+					const projectedStart = sourcePosition.clone().project(this.camera);
+					const projectedEnd = sourcePosition.clone().add(new THREE.Vector3(0, 0, 1)).project(this.camera);
+					this.sourceDragScreenAxis.set(
+						(projectedEnd.x - projectedStart.x) * bounds.width / 2,
+						-(projectedEnd.y - projectedStart.y) * bounds.height / 2
+					);
+				} else {
+					this.sourceDragPlane.normal.set(0, 0, 1);
+					this.sourceDragPlane.constant = -sourcePosition.z;
+				}
 			}
 			this.controls.enabled = false;
 			canvas.setPointerCapture(event.pointerId);
@@ -525,6 +557,26 @@ class Instaferogram extends JApp {
 				this.interferenceMaterialOpaque.sourceDirections[sourceIndex].copy(direction);
 				this.interferenceMaterialSemiTransparent.uniforms.sourcePositions.value[sourceIndex].copy(direction);
 				this.interferenceMaterialOpaque.uniforms.sourcePositions.value[sourceIndex].copy(direction);
+			} else if (this.draggedSourcePerpendicular) {
+				const bounds = canvas.getBoundingClientRect();
+				const pointerDelta = new THREE.Vector2(
+					event.clientX - this.sourceDragStartPointer.x,
+					event.clientY - this.sourceDragStartPointer.y
+				);
+				const axisLengthSq = this.sourceDragScreenAxis.lengthSq();
+				let zDelta;
+				if (axisLengthSq > 0.25) {
+					zDelta = pointerDelta.dot(this.sourceDragScreenAxis) / axisLengthSq;
+				} else {
+					const cameraSpacePosition = this.sourceDragStart.clone().applyMatrix4(this.camera.matrixWorldInverse);
+					const viewDepth = Math.max(0.1, -cameraSpacePosition.z);
+					const worldUnitsPerPixel = 2 * viewDepth * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) / bounds.height;
+					zDelta = -pointerDelta.y * worldUnitsPerPixel;
+				}
+				const position = this.sourceDragStart.clone();
+				position.z += zDelta;
+				this.interferenceMaterialSemiTransparent.uniforms.sourcePositions.value[sourceIndex].copy(position);
+				this.interferenceMaterialOpaque.uniforms.sourcePositions.value[sourceIndex].copy(position);
 			} else {
 				const point = this.sourceRaycaster.ray.intersectPlane(this.sourceDragPlane, new THREE.Vector3());
 				if (!point) return;
@@ -541,6 +593,8 @@ class Instaferogram extends JApp {
 			this.draggedSource = null;
 			this.draggedSourceIndex = -1;
 			this.draggedPointerId = null;
+			this.draggedSourcePerpendicular = false;
+			this.sourceDragGuide.visible = false;
 			this.controls.enabled = true;
 			canvas.style.cursor = '';
 			if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
@@ -624,6 +678,7 @@ class Instaferogram extends JApp {
 			sourceKX: 0,
 			sourceKY: 0,
 			sourceKZ: 2 * Math.PI,
+			perpendicularSourceDrag: false,
 			fineControl: false,
 			plotType: this.interferenceMaterialSemiTransparent.uniforms.plotType.value,
 			brightness: Instaferogram.getBaseLog(2, this.interferenceMaterialSemiTransparent.uniforms.brightnessFactor.value), // exposure compensation
@@ -771,6 +826,9 @@ class Instaferogram extends JApp {
 		// }
 		
 		const folderSources = this.gui.addFolder('Selected source');
+		folderSources.add(this.guiVariables, 'perpendicularSourceDrag')
+			.name('Perpendicular drag (touch)')
+			.domElement.title = 'Enable to move sources perpendicular to the source plane while dragging; desktop users can hold Shift instead.';
 		this.sourceNumberController = folderSources.add(
 			this.guiVariables,
 			'sourceNumber',
