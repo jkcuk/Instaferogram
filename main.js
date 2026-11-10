@@ -18,11 +18,20 @@ class Instaferogram extends JApp {
 	sourceMarkerGeometry = new THREE.SphereGeometry(0.12, 32, 24);
 	sourceLineGeometry = new THREE.CylinderGeometry(0.025, 0.025, 1, 24);
 	sourceMarkerMaterial = new THREE.MeshBasicMaterial({ color: 0xffcc00 });
+	sourceDirectionSphere = new THREE.Mesh(
+		new THREE.SphereGeometry(1, 32, 24),
+		new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.2, depthWrite: false })
+	);
+	sourceDragTargets = [];
+	sourceMarkerMode = null;
 	sourceDragPlane = new THREE.Plane();
+	sourceDragSphere = new THREE.Sphere();
 	sourceRaycaster = new THREE.Raycaster();
 	sourcePointer = new THREE.Vector2();
 	draggedSource = null;
+	draggedSourceIndex = -1;
 	draggedPointerId = null;
+	sourceDetailControllers = [];
 	xPlane;
 	yPlane;
 	zPlane;
@@ -95,7 +104,9 @@ class Instaferogram extends JApp {
 		this.sourceZPlane = this.createZPlane( this.interferenceMaterialOpaque.sourceZ, this.interferenceMaterialOpaque );
 		this.scene.add( this.sourceZPlane );
 		this.sourceMarkers.visible = false;
+		this.sourceDirectionSphere.visible = false;
 		this.scene.add(this.sourceMarkers);
+		this.scene.add(this.sourceDirectionSphere);
 		this.updateSourceMarkers();
 
 		this.xPlane = this.createXPlane( 0, this.interferenceMaterialOpaque );
@@ -201,34 +212,247 @@ class Instaferogram extends JApp {
 		// controls.maxPolarAngle = Math.PI;
 	}
 
-	updateSources() {
+	updateSources({ preservePositions = false, preserveAmplitudes = true, preserveDirections = true, previousSourceCount = this.interferenceMaterialSemiTransparent.noOfSources } = {}) {
+		const oldPositions = this.interferenceMaterialSemiTransparent.uniforms.sourcePositions.value.map((position) => position.clone());
+		const oldAmplitudes = this.interferenceMaterialSemiTransparent.uniforms.sourceAmplitudes.value.map((amplitude) => amplitude.clone());
+		const oldDirections = this.interferenceMaterialSemiTransparent.uniforms.sourceDirections.value.map((direction) => direction.clone());
+
 		this.interferenceMaterialSemiTransparent.updateSources();
 		this.interferenceMaterialOpaque.updateSources();
+
+		for (const material of [this.interferenceMaterialSemiTransparent, this.interferenceMaterialOpaque]) {
+			const count = Math.min(material.noOfSources, previousSourceCount);
+			for (let i = 0; i < count; i++) {
+				if (preservePositions) material.uniforms.sourcePositions.value[i].copy(oldPositions[i]);
+				if (preserveAmplitudes) material.uniforms.sourceAmplitudes.value[i].copy(oldAmplitudes[i]);
+				if (preserveDirections) material.uniforms.sourceDirections.value[i].copy(oldDirections[i]);
+			}
+		}
+
 		this.updateSourceMarkers();
+		this.updateSourceDetails();
 	}
 
 	updateSourceMarkers() {
 		const positions = this.interferenceMaterialOpaque.uniforms.sourcePositions.value;
+		const directions = this.interferenceMaterialOpaque.uniforms.sourceDirections.value;
 		const noOfSources = this.interferenceMaterialOpaque.noOfSources;
 		const isParallelLines = this.interferenceMaterialOpaque.fieldType === this.parallelLinesType;
-		const geometry = isParallelLines ? this.sourceLineGeometry : this.sourceMarkerGeometry;
+		const isPlaneWave = this.interferenceMaterialOpaque.fieldType === this.uniformPlaneWavesType;
+		const mode = isPlaneWave ? 'plane-wave' : isParallelLines ? 'line' : 'point';
 
-		while (this.sourceMarkers.children.length < noOfSources) {
-			const marker = new THREE.Mesh(geometry, this.sourceMarkerMaterial);
-			marker.renderOrder = 10;
-			this.sourceMarkers.add(marker);
+		if (this.sourceMarkerMode !== mode) {
+			this.clearSourceMarkers();
+			this.sourceMarkerMode = mode;
 		}
+
 		while (this.sourceMarkers.children.length > noOfSources) {
-			this.sourceMarkers.remove(this.sourceMarkers.children[this.sourceMarkers.children.length - 1]);
+			const marker = this.sourceMarkers.children[this.sourceMarkers.children.length - 1];
+			this.disposeSourceMarker(marker);
+			this.sourceMarkers.remove(marker);
+		}
+		while (this.sourceMarkers.children.length < noOfSources) {
+			this.sourceMarkers.add(this.createSourceMarker(mode, this.sourceMarkers.children.length));
 		}
 
+		this.sourceDragTargets = [];
 		for (let i = 0; i < noOfSources; i++) {
 			const marker = this.sourceMarkers.children[i];
-			marker.geometry = geometry;
-			marker.position.copy(positions[i]);
-			marker.scale.set(1, isParallelLines ? this.sourceZPlane.scale.y : 1, 1);
-			if (isParallelLines) marker.position.y = this.sourceZPlane.position.y;
+			if (isPlaneWave) {
+				const origin = positions[i];
+				const direction = directions[i].clone().normalize();
+				const k = this.interferenceMaterialOpaque.uniforms.k.value;
+				marker.userData.arrow.position.copy(origin);
+				marker.userData.arrow.setDirection(direction);
+				marker.userData.arrow.setLength(k, Math.min(k * 0.12, 0.5), Math.min(k * 0.07, 0.25));
+				marker.userData.tip.position.copy(origin).addScaledVector(direction, k);
+				this.sourceDragTargets.push(marker.userData.tip);
+			} else {
+				marker.userData.sourceIndex = i;
+				if (isParallelLines) {
+					const direction = directions[i].clone().normalize();
+					const minX = this.sourceZPlane.position.x - this.sourceZPlane.scale.x / 2;
+					const maxX = this.sourceZPlane.position.x + this.sourceZPlane.scale.x / 2;
+					const minY = this.sourceZPlane.position.y - this.sourceZPlane.scale.y / 2;
+					const maxY = this.sourceZPlane.position.y + this.sourceZPlane.scale.y / 2;
+					let start = -Infinity;
+					let end = Infinity;
+
+					for (const [coordinate, component, min, max] of [
+						[positions[i].x, direction.x, minX, maxX],
+						[positions[i].y, direction.y, minY, maxY]
+					]) {
+						if (Math.abs(component) < 1e-8) {
+							if (coordinate < min || coordinate > max) {
+								start = 1;
+								end = 0;
+								break;
+							}
+							continue;
+						}
+
+						const t1 = (min - coordinate) / component;
+						const t2 = (max - coordinate) / component;
+						start = Math.max(start, Math.min(t1, t2));
+						end = Math.min(end, Math.max(t1, t2));
+					}
+
+					if (end > start) {
+						marker.position.copy(positions[i]).addScaledVector(direction, (start + end) / 2);
+						marker.scale.set(1, end - start, 1);
+						marker.visible = true;
+						this.sourceDragTargets.push(marker);
+					} else {
+						marker.position.copy(positions[i]);
+						marker.scale.set(1, 0, 1);
+						marker.visible = false;
+					}
+					marker.rotation.z = -Math.atan2(direction.x, direction.y);
+				} else {
+					marker.position.copy(positions[i]);
+					marker.scale.setScalar(1);
+					marker.rotation.set(0, 0, 0);
+					marker.visible = true;
+					this.sourceDragTargets.push(marker);
+				}
+			}
 		}
+
+		const k = this.interferenceMaterialOpaque.uniforms.k.value;
+		this.sourceDirectionSphere.position.set(0, 0, this.interferenceMaterialOpaque.sourceZ);
+		this.sourceDirectionSphere.scale.setScalar(k);
+		this.sourceDirectionSphere.visible = this.sourceMarkers.visible && isPlaneWave;
+	}
+
+	createSourceMarker(mode, sourceIndex) {
+		if (mode !== 'plane-wave') {
+			const geometry = mode === 'line' ? this.sourceLineGeometry : this.sourceMarkerGeometry;
+			const marker = new THREE.Mesh(geometry, this.sourceMarkerMaterial);
+			marker.renderOrder = 10;
+			marker.userData.sourceIndex = sourceIndex;
+			return marker;
+		}
+
+		const marker = new THREE.Group();
+		marker.userData.arrow = new THREE.ArrowHelper(
+			new THREE.Vector3(0, 0, 1),
+			new THREE.Vector3(),
+			1,
+			0xffcc00
+		);
+		marker.userData.tip = new THREE.Mesh(this.sourceMarkerGeometry, this.sourceMarkerMaterial);
+		marker.userData.tip.userData.sourceIndex = sourceIndex;
+		marker.add(marker.userData.arrow, marker.userData.tip);
+		return marker;
+	}
+
+	disposeSourceMarker(marker) {
+		if (!marker.userData.arrow) return;
+		const { line, cone } = marker.userData.arrow;
+		line.geometry.dispose();
+		line.material.dispose();
+		cone.geometry.dispose();
+		cone.material.dispose();
+	}
+
+	clearSourceMarkers() {
+		for (const marker of this.sourceMarkers.children) this.disposeSourceMarker(marker);
+		this.sourceMarkers.clear();
+		this.sourceDragTargets = [];
+	}
+
+	updateSourceDetails() {
+		if (!this.guiVariables) return;
+
+		const material = this.interferenceMaterialOpaque;
+		const sourceCount = material.noOfSources;
+		this.guiVariables.sourceNumber = Math.min(Math.max(1, this.guiVariables.sourceNumber), sourceCount);
+		if (this.sourceNumberController) {
+			this.sourceNumberController.max(sourceCount);
+			this.sourceNumberController.updateDisplay();
+		}
+
+		const index = this.guiVariables.sourceNumber - 1;
+		const position = material.uniforms.sourcePositions.value[index];
+		const amplitude = material.uniforms.sourceAmplitudes.value[index];
+		const direction = material.uniforms.sourceDirections.value[index];
+		this.guiVariables.sourceX = position.x;
+		this.guiVariables.sourceY = position.y;
+		this.guiVariables.sourceZPosition = position.z;
+		this.guiVariables.sourceIntensity = amplitude.lengthSq();
+		this.guiVariables.sourcePhase = Math.atan2(amplitude.y, amplitude.x);
+		this.guiVariables.sourceLineAngle = Math.atan2(direction.x, direction.y) * 180 / Math.PI;
+		const waveVector = direction.clone().multiplyScalar(material.uniforms.k.value);
+		this.guiVariables.sourceKX = waveVector.x;
+		this.guiVariables.sourceKY = waveVector.y;
+		this.guiVariables.sourceKZ = waveVector.z;
+
+		const isLineSource = material.fieldType === this.parallelLinesType;
+		const isPlaneWave = material.fieldType === this.uniformPlaneWavesType;
+		for (const controller of this.sourcePositionControllers ?? []) {
+			controller.domElement.style.display = isPlaneWave ? 'none' : '';
+			if (isPlaneWave) controller.disable();
+			else controller.enable();
+			controller.updateDisplay();
+		}
+		const k = material.uniforms.k.value;
+		for (const controller of this.sourceWaveVectorControllers ?? []) {
+			controller.domElement.style.display = isPlaneWave ? '' : 'none';
+			controller.min(-k).max(k);
+			controller.updateDisplay();
+		}
+		if (this.sourceLineAngleController) {
+			this.sourceLineAngleController.domElement.style.display = isLineSource ? '' : 'none';
+			this.sourceLineAngleController.updateDisplay();
+		}
+		for (const controller of this.sourceDetailControllers) controller.updateDisplay();
+	}
+
+	applySourceDetail(property, value) {
+		const index = this.guiVariables.sourceNumber - 1;
+		const materials = [this.interferenceMaterialSemiTransparent, this.interferenceMaterialOpaque];
+
+		if (property === 'sourceX' || property === 'sourceY' || property === 'sourceZPosition') {
+			const axis = { sourceX: 'x', sourceY: 'y', sourceZPosition: 'z' }[property];
+			for (const material of materials) material.uniforms.sourcePositions.value[index][axis] = value;
+		} else if (property === 'sourceLineAngle') {
+			const angle = value * Math.PI / 180;
+			const direction = new THREE.Vector3(Math.sin(angle), Math.cos(angle), 0);
+			for (const material of materials) material.uniforms.sourceDirections.value[index].copy(direction);
+		} else if (property === 'sourceKX' || property === 'sourceKY' || property === 'sourceKZ') {
+			const axis = { sourceKX: 'x', sourceKY: 'y', sourceKZ: 'z' }[property];
+			const otherAxes = ['x', 'y', 'z'].filter((component) => component !== axis);
+			const waveNumber = this.interferenceMaterialOpaque.uniforms.k.value;
+			const componentValue = THREE.MathUtils.clamp(value, -waveNumber, waveNumber);
+			const current = this.interferenceMaterialOpaque.uniforms.sourceDirections.value[index]
+				.clone()
+				.multiplyScalar(waveNumber);
+			const remainingMagnitude = Math.sqrt(Math.max(0, waveNumber * waveNumber - componentValue * componentValue));
+			const remaining = new THREE.Vector2(current[otherAxes[0]], current[otherAxes[1]]);
+			if (remaining.lengthSq() === 0) remaining.set(1, 0);
+			remaining.setLength(remainingMagnitude);
+			const waveVector = new THREE.Vector3();
+			waveVector[axis] = componentValue;
+			waveVector[otherAxes[0]] = remaining.x;
+			waveVector[otherAxes[1]] = remaining.y;
+			for (const material of materials) {
+				material.uniforms.sourceDirections.value[index].copy(waveVector).normalize();
+			}
+		} else {
+			const amplitude = this.interferenceMaterialOpaque.uniforms.sourceAmplitudes.value[index];
+			const intensity = property === 'sourceIntensity' ? value : amplitude.lengthSq();
+			const phase = property === 'sourcePhase' ? value : Math.atan2(amplitude.y, amplitude.x);
+			const magnitude = Math.sqrt(Math.max(0, intensity));
+			for (const material of materials) {
+				material.uniforms.sourceAmplitudes.value[index].set(
+					magnitude * Math.cos(phase),
+					magnitude * Math.sin(phase)
+				);
+			}
+		}
+
+		this.updateSourceMarkers();
+		this.updateSourceDetails();
 	}
 
 	installSourceDragging() {
@@ -247,13 +471,21 @@ class Instaferogram extends JApp {
 			if (event.button !== 0 || this.draggedSource || !this.sourceMarkers.visible) return;
 
 			setPointer(event);
-			const [intersection] = this.sourceRaycaster.intersectObjects(this.sourceMarkers.children);
+			const [intersection] = this.sourceRaycaster.intersectObjects(this.sourceDragTargets);
 			if (!intersection) return;
 
 			this.draggedSource = intersection.object;
+			this.draggedSourceIndex = intersection.object.userData.sourceIndex;
 			this.draggedPointerId = event.pointerId;
-			this.sourceDragPlane.normal.set(0, 0, 1);
-			this.sourceDragPlane.constant = -this.interferenceMaterialOpaque.sourceZ;
+			this.guiVariables.sourceNumber = this.draggedSourceIndex + 1;
+			this.updateSourceDetails();
+			if (this.interferenceMaterialOpaque.fieldType === this.uniformPlaneWavesType) {
+				this.sourceDragSphere.center.set(0, 0, this.interferenceMaterialOpaque.sourceZ);
+				this.sourceDragSphere.radius = this.interferenceMaterialOpaque.uniforms.k.value;
+			} else {
+				this.sourceDragPlane.normal.set(0, 0, 1);
+				this.sourceDragPlane.constant = -this.interferenceMaterialOpaque.sourceZ;
+			}
 			this.controls.enabled = false;
 			canvas.setPointerCapture(event.pointerId);
 			canvas.style.cursor = 'grabbing';
@@ -264,28 +496,34 @@ class Instaferogram extends JApp {
 			if (!this.draggedSource) {
 				if (!this.sourceMarkers.visible) return;
 				setPointer(event);
-				canvas.style.cursor = this.sourceRaycaster.intersectObjects(this.sourceMarkers.children).length ? 'grab' : '';
+				canvas.style.cursor = this.sourceRaycaster.intersectObjects(this.sourceDragTargets).length ? 'grab' : '';
 				return;
 			}
 			if (event.pointerId !== this.draggedPointerId) return;
 
 			setPointer(event);
-			const point = this.sourceRaycaster.ray.intersectPlane(this.sourceDragPlane, new THREE.Vector3());
-			if (!point) return;
-
-			const sourceIndex = this.sourceMarkers.children.indexOf(this.draggedSource);
-			if (this.interferenceMaterialOpaque.fieldType === this.parallelLinesType) {
-				point.y = this.sourceZPlane.position.y;
+			const sourceIndex = this.draggedSourceIndex;
+			if (this.interferenceMaterialOpaque.fieldType === this.uniformPlaneWavesType) {
+				const point = this.sourceRaycaster.ray.intersectSphere(this.sourceDragSphere, new THREE.Vector3());
+				if (!point) return;
+				const direction = point.sub(this.sourceDragSphere.center).normalize();
+				this.interferenceMaterialSemiTransparent.uniforms.sourceDirections.value[sourceIndex].copy(direction);
+				this.interferenceMaterialOpaque.uniforms.sourceDirections.value[sourceIndex].copy(direction);
+			} else {
+				const point = this.sourceRaycaster.ray.intersectPlane(this.sourceDragPlane, new THREE.Vector3());
+				if (!point) return;
+				this.interferenceMaterialSemiTransparent.uniforms.sourcePositions.value[sourceIndex].copy(point);
+				this.interferenceMaterialOpaque.uniforms.sourcePositions.value[sourceIndex].copy(point);
 			}
-			this.draggedSource.position.copy(point);
-			this.interferenceMaterialSemiTransparent.uniforms.sourcePositions.value[sourceIndex].copy(point);
-			this.interferenceMaterialOpaque.uniforms.sourcePositions.value[sourceIndex].copy(point);
+			this.updateSourceMarkers();
+			this.updateSourceDetails();
 		});
 
 		const stopDragging = (event) => {
 			if (!this.draggedSource || event.pointerId !== this.draggedPointerId) return;
 
 			this.draggedSource = null;
+			this.draggedSourceIndex = -1;
 			this.draggedPointerId = null;
 			this.controls.enabled = true;
 			canvas.style.cursor = '';
@@ -320,15 +558,15 @@ class Instaferogram extends JApp {
 	fieldTypes = {
 		'Points on line': 0, 
 		'Points on circle': 1, 
-		'Parallel lines': 2
-		// 'Uniform plane waves', 
+		'Parallel lines': 2,
+		'Uniform plane waves': 3
 		// 'Hermite-Gaussian beam', 
 		// 'Laguerre-Gaussian beam', 
 		// 'Bessel beam'
 	};
 	
 	getFieldTypeString() {
-		return Object.keys(this.fieldTypes).find(k => this.interferenceMaterialSemiTransparent.fieldType[k] === this.interferenceMaterialSemiTransparent.fieldType);
+		return Object.keys(this.fieldTypes).find(k => this.fieldTypes[k] === this.interferenceMaterialSemiTransparent.fieldType);
 		// return this.fieldTypes[ this.interferenceMaterialSemiTransparent.fieldType ];
 	}
 
@@ -360,6 +598,16 @@ class Instaferogram extends JApp {
 			sqrtSourceExtent: Math.sqrt(this.interferenceMaterialSemiTransparent.sourceExtent),
 			sourceZ: this.interferenceMaterialSemiTransparent.sourceZ,
 			atanSourceZ: Math.atan(this.interferenceMaterialSemiTransparent.sourceZ),
+			sourceNumber: 1,
+			sourceX: 0,
+			sourceY: 0,
+			sourceZPosition: 0,
+			sourceIntensity: 0,
+			sourcePhase: 0,
+			sourceLineAngle: 0,
+			sourceKX: 0,
+			sourceKY: 0,
+			sourceKZ: 2 * Math.PI,
 			plotType: this.interferenceMaterialSemiTransparent.uniforms.plotType.value,
 			brightness: Instaferogram.getBaseLog(2, this.interferenceMaterialSemiTransparent.uniforms.brightnessFactor.value), // exposure compensation
 			showSourcePositions: this.sourceMarkers.visible,
@@ -417,6 +665,8 @@ class Instaferogram extends JApp {
 			.onChange( (lambda) => { 
 				this.interferenceMaterialSemiTransparent.uniforms.k.value = 2*Math.PI/lambda; 
 				this.interferenceMaterialOpaque.uniforms.k.value = 2*Math.PI/lambda;
+				this.updateSourceMarkers();
+				this.updateSourceDetails();
 			} );
 
 		folderPhysics.add( this.guiVariables, 'fieldType', 
@@ -426,7 +676,7 @@ class Instaferogram extends JApp {
 			.onChange( (a) => { 
 				this.interferenceMaterialSemiTransparent.fieldType = a; 
 				this.interferenceMaterialOpaque.fieldType = a;
-				this.updateSources();
+				this.updateSources({ preserveDirections: false });
 				// recreateGUI(); 
 			} );
 		
@@ -435,7 +685,7 @@ class Instaferogram extends JApp {
 			.onChange( (m) => { 
 				this.interferenceMaterialSemiTransparent.m = m; 
 				this.interferenceMaterialOpaque.m = m;
-				this.updateSources();
+				this.updateSources({ preservePositions: true, preserveAmplitudes: false });
 			} );
 		
 		this.addSqrtSlider(
@@ -486,11 +736,12 @@ class Instaferogram extends JApp {
 		folderPhysics.add( this.guiVariables, 'noOfSources', 1, maxNoOfSources, 1)
 			.name('No of sources')
 			.onChange( (noOfSources) => { 
+				const previousSourceCount = this.interferenceMaterialSemiTransparent.noOfSources;
 				this.interferenceMaterialSemiTransparent.noOfSources = noOfSources;
 				this.interferenceMaterialSemiTransparent.uniforms.noOfSources.value = noOfSources;
 				this.interferenceMaterialOpaque.noOfSources = noOfSources;
 				this.interferenceMaterialOpaque.uniforms.noOfSources.value = noOfSources;
-				this.updateSources();
+				this.updateSources({ previousSourceCount });
 			} );
 		
 		// change menu according to field type
@@ -502,6 +753,60 @@ class Instaferogram extends JApp {
 		// 		gui.addFolder( '1' );
 		// }
 		
+		const folderSources = this.gui.addFolder('Selected source');
+		this.sourceNumberController = folderSources.add(
+			this.guiVariables,
+			'sourceNumber',
+			1,
+			this.interferenceMaterialOpaque.noOfSources,
+			1
+		).name('Source number').onChange(() => this.updateSourceDetails());
+		this.sourceDetailControllers = [this.sourceNumberController];
+
+		this.sourcePositionControllers = [
+			['sourceX', 'x'],
+			['sourceY', 'y'],
+			['sourceZPosition', 'z']
+		].map(([property, label]) => {
+			const controller = folderSources.add(this.guiVariables, property, -100, 100, 0.01)
+				.name(label)
+				.onChange((value) => this.applySourceDetail(property, value));
+			this.sourceDetailControllers.push(controller);
+			return controller;
+		});
+		this.sourceWaveVectorControllers = [
+			['sourceKX', 'k_x'],
+			['sourceKY', 'k_y'],
+			['sourceKZ', 'k_z']
+		].map(([property, label]) => {
+			const controller = folderSources.add(
+				this.guiVariables,
+				property,
+				-this.interferenceMaterialOpaque.uniforms.k.value,
+				this.interferenceMaterialOpaque.uniforms.k.value,
+				0.01
+			).name(label).onChange((value) => this.applySourceDetail(property, value));
+			this.sourceDetailControllers.push(controller);
+			return controller;
+		});
+
+		for (const [property, label, min, max, step] of [
+			['sourceIntensity', 'Intensity', 0, 100, 0.01],
+			['sourcePhase', 'Phase (rad)', -Math.PI, Math.PI, 0.01]
+		]) {
+			this.sourceDetailControllers.push(
+				folderSources.add(this.guiVariables, property, min, max, step)
+					.name(label)
+					.onChange((value) => this.applySourceDetail(property, value))
+			);
+		}
+
+		this.sourceLineAngleController = folderSources.add(this.guiVariables, 'sourceLineAngle', -180, 180, 1)
+			.name('Angle to y (deg)')
+			.onChange((value) => this.applySourceDetail('sourceLineAngle', value));
+		this.sourceDetailControllers.push(this.sourceLineAngleController);
+		this.updateSourceDetails();
+
 		const folderPlot = this.gui.addFolder( 'Plot' );
 		folderPlot.add( this.guiVariables, 'plotType', { 'Intensity': 0, 'Phase & intensity': 1, 'Phase': 2, 'Re(amplitude)': 3 } )
 			.name('Plot type')
@@ -527,6 +832,7 @@ class Instaferogram extends JApp {
 			.name('Show source positions')
 			.onChange( (s) => {
 				this.sourceMarkers.visible = s;
+				this.updateSourceMarkers();
 			} );
 		
 		folderPlot.add( this.guiVariables, 'showXPlane' )

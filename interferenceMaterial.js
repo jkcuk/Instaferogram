@@ -14,6 +14,7 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
     // sourceTypes;    // 0 = point source, 1 = line source, 2 = uniform plane wave, 3 = Hermite-Gaussian (HG) beam, 4 = Laguerre-Gaussian (LG) beam, 5 = Bessel beam
     sourcePositions;
     sourceAmplitudes; // array of {real, imaginary} parts of complex amplitudes
+    sourceDirections;
     // sourceDirections;   // for line source: line direction; for other beams: propagation direction
     // sourceAdditionalFloats1;	// for HG & LG beams: beam waist, w0; for Bessel beams: cone angle, theta
     // sourceAdditionalInts1;	// for Hermite-Gaussian beams: horizontal index, m; for Laguerre-Gaussian beams & Bessel beams: azimuthal index, l
@@ -29,7 +30,7 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
      * @param {float} opacity 
      */
     constructor( 
-        sourceType, // 0 = point sources, 1 = line sources
+        sourceType, // 0 = point sources, 1 = line sources, 2 = uniform plane waves
         noOfSources, fieldType, sourceExtent, m, sourceZ, opacity ) {
         super({
             side: THREE.DoubleSide,
@@ -42,6 +43,10 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 sourcePositions: { value: Array.from( 
                     { length: maxNoOfSources },
                     () => new THREE.Vector3(0, 0, 0)
+                ) },
+                sourceDirections: { value: Array.from(
+                    { length: maxNoOfSources },
+                    () => new THREE.Vector3(0, 1, 0)
                 ) },
                 sourceAmplitudes: { value: Array.from( 
                     { length: maxNoOfSources },
@@ -80,6 +85,7 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 // uniform int sourceTypes[${maxNoOfSources}];
                 uniform int sourceType;
                 uniform vec3 sourcePositions[${maxNoOfSources}];
+                uniform vec3 sourceDirections[${maxNoOfSources}];
                 uniform vec2 sourceAmplitudes[${maxNoOfSources}];
                 uniform int noOfSources;
                 uniform float maxAmplitude;
@@ -121,9 +127,16 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                         break;
                     case 1: // line source
                         vec3 r = v_position - sourcePositions[i];
-                        d = sqrt(r.x*r.x + r.z*r.z);
+                        vec3 lineDirection = normalize(sourceDirections[i]);
+                        vec3 perpendicular = r - dot(r, lineDirection)*lineDirection;
+                        d = max(length(perpendicular), 0.00001);
                         kd = k*d - omegaT;
                         a = 1./sqrt(d);
+                        break;
+                    case 2: // uniform plane wave
+                        kd = k*dot(sourceDirections[i], v_position - sourcePositions[i]) - omegaT;
+                        a = 1.;
+                        break;
                     }
                     float c = cos(kd);
                     float s = sin(kd);
@@ -197,6 +210,9 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
             case 2: // parallel line sources
                 this.uniforms.sourceType.value = 1;
                 break;
+            case 3: // uniform plane waves
+                this.uniforms.sourceType.value = 2;
+                break;
             case 0:	// line of point sources
             case 1: // circle of point sources
             default:
@@ -204,6 +220,7 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 break;
         }
         this.uniforms.sourcePositions.value  = InterferenceMaterial.createSourcePositions ( this.noOfSources, this.fieldType, this.sourceExtent, this.sourceZ );
+        this.uniforms.sourceDirections.value = InterferenceMaterial.createSourceDirections( this.noOfSources, this.fieldType );
         this.uniforms.sourceAmplitudes.value = InterferenceMaterial.createSourceAmplitudes( this.noOfSources, this.m, this.keepPowerConstant );
     }
 
@@ -222,6 +239,9 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
                 case 2: // parallel line sources
                     sourcePositions.push(new THREE.Vector3(sourceExtent*(noOfSources == 1?0:(i/(noOfSources-1)-0.5)), 0, sourceZ));
                     break;			
+                case 3: // uniform plane waves share the same phase reference
+                    sourcePositions.push(new THREE.Vector3(0, 0, sourceZ));
+                    break;
                 case 1:	// ring of point sources
                 default:
                     let phi = 2.0*Math.PI*i/noOfSources;	// azimuthal angle
@@ -234,6 +254,16 @@ class InterferenceMaterial extends THREE.ShaderMaterial {
         }
 
         return sourcePositions;
+    }
+
+    static createSourceDirections( noOfSources, fieldType ) {
+        const direction = fieldType === 2
+            ? new THREE.Vector3(0, 1, 0)
+            : new THREE.Vector3(0, 0, 1);
+        return Array.from(
+            { length: maxNoOfSources },
+            () => direction.clone()
+        );
     }
 
     static createSourceAmplitudes( noOfSources, m, keepPowerConstant ) {
