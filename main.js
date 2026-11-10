@@ -1050,6 +1050,61 @@ class Instaferogram extends JApp {
 				this.camera.updateProjectionMatrix();
 			} );   
 		folderCamera.close();
+		this.enableFineControlOnSliders(this.gui);
+		const fineControlHint = document.createElement('div');
+		fineControlHint.textContent = 'Hold Shift while dragging a slider for fine control';
+		fineControlHint.style.cssText = 'padding: 6px 10px; font-size: 11px; opacity: 0.7;';
+		this.gui.domElement.appendChild(fineControlHint);
+	}
+
+	enableFineControlOnSliders(gui) {
+		for (const controller of gui.controllers) {
+			const slider = controller.domElement.querySelector('.slider');
+			if (!slider) continue;
+
+			slider.title = 'Hold Shift and drag for fine control';
+			controller.domElement.title = 'Hold Shift and drag for fine control';
+			let fineDrag = null;
+
+			slider.addEventListener('pointerdown', (event) => {
+				if (event.button !== 0 || !event.shiftKey) return;
+
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				const bounds = slider.getBoundingClientRect();
+				fineDrag = {
+					pointerId: event.pointerId,
+					startX: event.clientX,
+					startValue: controller.getValue(),
+					range: controller._max - controller._min,
+					width: bounds.width
+				};
+				const moveFineSlider = (moveEvent) => {
+					if (!fineDrag || moveEvent.pointerId !== fineDrag.pointerId) return;
+					moveEvent.preventDefault();
+					moveEvent.stopImmediatePropagation();
+					if (fineDrag.width <= 0 || !Number.isFinite(fineDrag.range)) return;
+
+					const delta = (moveEvent.clientX - fineDrag.startX)
+						/ fineDrag.width * fineDrag.range * 0.1;
+					controller.setValue(fineDrag.startValue + delta);
+				};
+				const endFineSlider = (endEvent) => {
+					if (!fineDrag || endEvent.pointerId !== fineDrag.pointerId) return;
+					window.removeEventListener('pointermove', moveFineSlider, true);
+					window.removeEventListener('pointerup', endFineSlider, true);
+					window.removeEventListener('pointercancel', endFineSlider, true);
+					fineDrag = null;
+				};
+				window.addEventListener('pointermove', moveFineSlider, true);
+				window.addEventListener('pointerup', endFineSlider, true);
+				window.addEventListener('pointercancel', endFineSlider, true);
+			}, true);
+		}
+
+		for (const folder of Object.values(gui.folders)) {
+			this.enableFineControlOnSliders(folder);
+		}
 	}
 
 	addLogSlider(gui, params, property, minNumber, maxNumber, onChange) {
