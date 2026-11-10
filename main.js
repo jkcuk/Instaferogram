@@ -624,6 +624,7 @@ class Instaferogram extends JApp {
 			sourceKX: 0,
 			sourceKY: 0,
 			sourceKZ: 2 * Math.PI,
+			fineControl: false,
 			plotType: this.interferenceMaterialSemiTransparent.uniforms.plotType.value,
 			brightness: Instaferogram.getBaseLog(2, this.interferenceMaterialSemiTransparent.uniforms.brightnessFactor.value), // exposure compensation
 			showSourcePositions: this.sourceMarkers.visible,
@@ -1066,9 +1067,11 @@ class Instaferogram extends JApp {
 				this.camera.updateProjectionMatrix();
 			} );   
 		folderCamera.close();
+		this.gui.add(this.guiVariables, 'fineControl')
+			.name('Fine control (touch)');
 		this.enableFineControlOnSliders(this.gui);
 		const fineControlHint = document.createElement('div');
-		fineControlHint.textContent = 'Hold Shift while dragging a slider for fine control';
+		fineControlHint.textContent = 'Touch: enable Fine control. Desktop: hold Shift while dragging.';
 		fineControlHint.style.cssText = 'padding: 6px 10px; font-size: 11px; opacity: 0.7;';
 		this.gui.domElement.appendChild(fineControlHint);
 	}
@@ -1078,12 +1081,13 @@ class Instaferogram extends JApp {
 			const slider = controller.domElement.querySelector('.slider');
 			if (!slider) continue;
 
-			slider.title = 'Hold Shift and drag for fine control';
-			controller.domElement.title = 'Hold Shift and drag for fine control';
+			slider.title = 'Enable Fine control, or hold Shift while dragging';
+			controller.domElement.title = 'Enable Fine control, or hold Shift while dragging';
+			slider.style.touchAction = 'none';
 			let fineDrag = null;
 
 			slider.addEventListener('pointerdown', (event) => {
-				if (event.button !== 0 || !event.shiftKey) return;
+				if (event.button !== 0 || !(event.shiftKey || this.guiVariables.fineControl)) return;
 
 				event.preventDefault();
 				event.stopImmediatePropagation();
@@ -1095,6 +1099,7 @@ class Instaferogram extends JApp {
 					range: controller._max - controller._min,
 					width: bounds.width
 				};
+				slider.setPointerCapture(event.pointerId);
 				const moveFineSlider = (moveEvent) => {
 					if (!fineDrag || moveEvent.pointerId !== fineDrag.pointerId) return;
 					moveEvent.preventDefault();
@@ -1107,6 +1112,9 @@ class Instaferogram extends JApp {
 				};
 				const endFineSlider = (endEvent) => {
 					if (!fineDrag || endEvent.pointerId !== fineDrag.pointerId) return;
+					if (slider.hasPointerCapture(endEvent.pointerId)) {
+						slider.releasePointerCapture(endEvent.pointerId);
+					}
 					window.removeEventListener('pointermove', moveFineSlider, true);
 					window.removeEventListener('pointerup', endFineSlider, true);
 					window.removeEventListener('pointercancel', endFineSlider, true);
